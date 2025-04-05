@@ -1,6 +1,14 @@
+# Project files
+*.Rproj
+*.csv
+*.gz
+*.xml
+*.html
+
 # History files
 .Rhistory
 .Rapp.history
+*.DS_Store
 
 # Session Data files
 .RData
