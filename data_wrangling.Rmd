@@ -107,15 +107,17 @@ data_import<- function(org_list){
     temp_org_df <- parse_finStatements(temp_wks,seq_along(temp_wks)) %>%
       add_column(Company=org,.before=2,.name_repair = 'minimal')
     #add company information to output data frame
-    orgs_df <- rbind(orgs_df,temp_org_df)
-  }
+    orgs_df <- rbind(orgs_df,temp_org_df)}
   #return output data frame
   return(orgs_df)
 }
 ```
 
 ```{r}
-sample_list <- c('A','B')
+sample_list <- c('State Farm','Berkshire Hathaway','Progressive','Allstate','Liberty Mutual',
+                 'Travelers','USAA','Chubb','Nationwide','Farmers Alliance',
+                 'American Family Ins','AIG','Fairfax Financial','Auto-Owners Ins','Tokio Marine',
+                 'Erie Ins','Berkley Ins','Hartford Fire Ins','Everest Re','CNA')
 data_import(sample_list)
 ```
 
