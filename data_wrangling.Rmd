@@ -1,0 +1,121 @@
+---
+title: "data_wrangling"
+author: "stat group"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r libraries | functions, include=FALSE, echo=FALSE}
+options(scipen=999); `%notin%` <- Negate(`%in%`)
+lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr','stringr','tidyr','rvest','chatgpt','xml2','purrr','tibble')
+lapply(lib_list, library, character.only=TRUE)
+source('./.Renviron')
+Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
+```
+
+```{r}
+cat(ask_chatgpt("how'd i convert all columns to numerics"))
+```
+
+```{r,rows.print=20}
+#function to parse each worksheet and return a data frame
+parse_finStatements <- function(ws_node, index){
+  ws_name <- xml_attr(ws_node, "Name", ns)
+  rows <- xml_find_all(ws_node, ".//ss:Row", ns)
+  #skip the first 6 rows
+  rows <- rows[-(1:6)]
+  #extract values per row
+  row_data <- map(rows, function(row){
+    cells <- xml_find_all(row, ".//ss:Cell", ns)
+    values <- map_chr(cells, ~ xml_text(xml_find_first(.x, ".//ss:Data", ns)))
+    return(values)})
+  #skip empty worksheets
+  if(length(row_data) == 0) return(tibble())  
+  #pad and bind
+  padded_data <- lapply(row_data, `length<-`, max(lengths(row_data)))
+  parsed_df <- as.data.frame(do.call(rbind, padded_data), stringsAsFactors = FALSE) %>%
+    mutate_all(~if_else(. == 'NA', NA, .)) %>%
+    mutate(across(everything(), as.character))
+  #coerce V2 to numeric
+  v2_numeric <- suppressWarnings(as.numeric(parsed_df$V2))
+  #find row indices where V2 is 1 and 51
+  starts_raw <- which(v2_numeric == 1)
+  ends <- which(v2_numeric == 51)
+  #adjust start indices to be 4 rows earlier
+  starts <- pmax(starts_raw - 4, 1)  # Ensure we don't go below row 1
+  #build valid (non-overlapping) start:end ranges
+  ranges <- list()
+  used_ends <- c()
+  for (i in seq_along(starts)){
+    start <- starts[i]
+    end_candidates <- ends[ends > starts_raw[i]]  # Ensure end is after raw "1"
+    if (length(end_candidates) > 0){
+      end <- end_candidates[1]
+      if (!(end %in% used_ends)){
+        ranges <- append(ranges, list(start:end))
+        used_ends <- c(used_ends, end)}}}
+  #flatten ranges into a vector of unique row indices to shift
+  rows_to_shift <- unique(unlist(ranges))
+  #shift V2–V16 left into V1–V15, set V16 to NA
+  for (i in 1:15){parsed_df[rows_to_shift, paste0("V", i)] <- parsed_df[rows_to_shift, paste0("V", i + 1)]}
+  parsed_df[rows_to_shift, "V16"] <- NA
+  #data clean-up & manipulation
+  parsed_df <- parsed_df %>%
+    mutate(V8 = case_when(V7 %in% c(1996:2024) ~ V7,
+                          .default = NA)) %>%
+    #assign annual indicator
+    fill(V8,.direction='down') %>%
+    #create pivot version...based on annual values
+    pivot_wider(id_cols = c(V1,V2),
+                names_from = V8,
+                values_from = V7,
+                values_fn = list) %>%
+    #collect relevant rows
+    slice(2:109) %>%
+    #collect relevant columns
+    select(-V1) %>%
+    #transpose data frame
+    t() %>%
+    as.data.frame() %>%
+    #extract annual indicator from index
+    rownames_to_column(var='index') %>%
+    #convert data types from list...created by pivot operation
+    mutate(across(where(is.list), ~ map_chr(.x, ~ paste(.x, collapse = ", "))))
+  #assign column names
+  colnames(parsed_df) <- parsed_df[1,]
+  colnames(parsed_df)[1] <- 'Year'
+  parsed_df <- parsed_df[-1,]
+  #return final data frame
+  return(parsed_df)
+}
+```
+
+```{r}
+#function to perform all data import operations
+data_import<- function(org_list){
+  #initialize output data frame
+  orgs_df <- data.frame()
+  #collect information from financial statements
+  for(org in org_list){
+    #import .xml file
+    temp_doc <- read_xml(paste0("../../research/",org,".xml"))
+    #initialize node information from file
+    temp_ns <- xml_ns(temp_doc)
+    #extract information about all 'Worksheet' nodes...annual information
+    temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
+    #apply parsing algorithm and assign company indicator
+    temp_org_df <- parse_finStatements(temp_wks,seq_along(temp_wks)) %>%
+      add_column(Company=org,.before=2,.name_repair = 'minimal')
+    #add company information to output data frame
+    orgs_df <- rbind(orgs_df,temp_org_df)
+  }
+  #return output data frame
+  return(orgs_df)
+}
+```
+
+```{r}
+sample_list <- c('A','B')
+data_import(sample_list)
+```
+
