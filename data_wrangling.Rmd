@@ -5,20 +5,21 @@ date: "`r Sys.Date()`"
 output: pdf_document
 ---
 
-```{r libraries | functions, include=FALSE, echo=FALSE}
+```{r libraries & env variables, include=FALSE, echo=FALSE}
 options(scipen=999); `%notin%` <- Negate(`%in%`)
-lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr','stringr','tidyr',
-              'rvest','chatgpt','xml2','purrr','tibble','yahoofinancer','YRmisc')
+lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr',
+              'stringr','tidyr','rvest','chatgpt',
+              'xml2','purrr','tibble','yahoofinancer','YRmisc')
 lapply(lib_list, library, character.only=TRUE)
 source('./.Renviron')
 Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
 ```
 
-```{r}
-cat(ask_chatgpt("how'd i group columns in a data frame by a date column, grouping by year and extracting the last value per year for the other columns"))
+```{r chatgpt_helper}
+cat(ask_chatgpt("how'd i drop all columns that contain character 'cer'"))
 ```
 
-```{r}
+```{r parse_finStatements}
 #function to parse each worksheet and return a data frame
 parse_finStatements <- function(ws_node, index){
   ws_name <- xml_attr(ws_node, "Name", ns)
@@ -72,9 +73,30 @@ parse_finStatements <- function(ws_node, index){
                 values_from = V7,
                 values_fn = list) %>%
     #collect relevant rows
-    slice(2:109) %>%
+    slice(2:110) %>%
+    add_column(col_names=c('na1','gross_liab_prem','gross_prop_prem','gross_comined_prop_liab_prem','gross_other_lines_prem',
+                           'gross_nonprop_reinsurance_prem','total_gross_prem','na2','net_liab_prem',
+                           'net_prop_prem','net_comined_prop_liab_prem','net_other_lines_prem','net_nonprop_reinsurance_prem',
+                           'total_net_prem','na3','net_underwriting_gain','net_investment_gain','total_other_income',
+                           'dividends_to_policyholders','taxes_incurred','net_income','na4','total_assets','na5','prem_incourse','prem_deferred','prem_accured',
+                           'total_liabilities','losses','loss_adjustment_expenses','unearned_prem','capital_paid_up','policyholders_surplus','na6','net_cash_from_operations','na7',
+                           'total_adjusted_capital','control_level_capital','na8','na9','na10','bonds','stocks','real_estate_mortgage_loans','real_estate',
+                           'cash_short-term_investment','contract_loans','derivatives','other_invested_assets','receivable_securities',
+                           'securities_lending_reinvested_collateral_assets','agg_write-ins','cash_invested_assets','na11',
+                           'affiliated_bonds','affiliated_preferred_stocks','affiliated_common_stocks','na12','affiliated_short-term_investments',
+                           'affiliated_real_estate_mortgage_loans','other_affiliated','total_affiliated','total_in-parent_investment','na13',
+                           'pct_affiliated_surplus','na14','net_unrealized_capital','divdends_to_stockholders',
+                           'change_in-surplus_policyholders','na15','gross_liab_losses','gross_prop_losses','gross_comined_prop_liab_losses',
+                           'na30','gross_other_lines_losses','gross_nonprop_reinsurance_losses','total_losses','na16',
+                           'net_liab_losses','net_prop_losses','net_comined_prop_liab_losses','net_other_lines_losses',
+                           'net_nonprop_reinsurance_losses','total_net_losses','na17','na18','earned_prem','incurred_losses',
+                           'incurred_loss_expenses','other_incurred_underwriting_expenses','net_underwriting_gain',
+                           'na19','na20','other_underwriting_expenses_to_net_prem','na21','loss_ratio','na22','net_prem_to_policyholder_surplus','na23','na24',
+                           '1yr_loss_development','na25','1yr_dev_loss_to_policyholders_surplus','na26','na27','2yr_loss_development',
+                           'na28','na29','2yr_dev_loss_to_policyholders_surplus'),
+               .before=2,.name_repair = 'minimal') %>%
     #collect relevant columns
-    select(-V1) %>%
+    select(-c(V1,V2)) %>%
     #transpose data frame
     t() %>%
     as.data.frame() %>%
@@ -91,7 +113,7 @@ parse_finStatements <- function(ws_node, index){
 }
 ```
 
-```{r}
+```{r parse_stockPrice}
 #get historical market data
 parse_stockPrice <- function(tick_df){
   tickers_df <- data.frame()
@@ -119,7 +141,7 @@ parse_stockPrice <- function(tick_df){
 }
 ```
 
-```{r}
+```{r data_import}
 #function to perform all data import operations
 data_import<- function(input.df,input.indicators){
   #initialize output data frame
@@ -152,12 +174,12 @@ data_import<- function(input.df,input.indicators){
   #return output data frame
   orgs_df <- orgs_df %>%
     mutate_all(~if_else(. == 'NA', NA, .)) %>%
-    select(where(~sum(!is.na(.)) >= 50))
+    select(-contains('na'))
   return(orgs_df)
 }
 ```
 
-```{r}
+```{r initialize parameters}
 #reference: https://www.reinsurancene.ws/top-100-u-s-property-casualty-insurance-companies/
 # sample_list <- c('State Farm','Berkshire Hathaway','Progressive','Allstate','Liberty Mutual',
 #                  'Travelers','USAA','Chubb','Nationwide','Farmers Alliance',
@@ -166,9 +188,9 @@ data_import<- function(input.df,input.indicators){
 
 #define company names
 sample_names <- c('Berkshire Hathaway A','Berkshire Hathaway B','Progressive','Allstate','Hanover Ins. Group',
-                 'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
-                 'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
-                 'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
+                  'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
+                  'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
+                  'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
 
 #define company tickers...based on yahoo finance
 sample_tickers <- c('brk-a','brk-b','prg','all','thg',
@@ -187,12 +209,15 @@ input_df <- data.frame(name=sample_names,
                        ticker=sample_tickers,
                        currency=sample_currency) 
 
-#GDP, employment no, CPI, retail sales, money supply
+#real GDP, employment no, CPI, retail sales, money supply
 sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS','M2REAL')
+```
 
+```{r}
 #compile data...
   #1. financial statements
   #2. economic indicators
   #3. stock price
 sample_df <- data_import(input_df,sample_econ_indicators)
+colnames(sample_df)
 ```
