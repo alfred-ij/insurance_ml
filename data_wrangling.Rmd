@@ -7,17 +7,18 @@ output: pdf_document
 
 ```{r libraries | functions, include=FALSE, echo=FALSE}
 options(scipen=999); `%notin%` <- Negate(`%in%`)
-lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr','stringr','tidyr','rvest','chatgpt','xml2','purrr','tibble')
+lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr','stringr','tidyr',
+              'rvest','chatgpt','xml2','purrr','tibble','yahoofinancer','YRmisc')
 lapply(lib_list, library, character.only=TRUE)
 source('./.Renviron')
 Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
 ```
 
 ```{r}
-cat(ask_chatgpt("how'd i convert all columns to numerics"))
+cat(ask_chatgpt("how'd i group columns in a data frame by a date column, grouping by year and extracting the last value per year for the other columns"))
 ```
 
-```{r,rows.print=20}
+```{r}
 #function to parse each worksheet and return a data frame
 parse_finStatements <- function(ws_node, index){
   ws_name <- xml_attr(ws_node, "Name", ns)
@@ -91,33 +92,107 @@ parse_finStatements <- function(ws_node, index){
 ```
 
 ```{r}
+#get historical market data
+parse_stockPrice <- function(tick_df){
+  tickers_df <- data.frame()
+  for(tick in c(1:nrow(tick_df))){
+    #initialize ticker
+    temp_tick <- Ticker$new(tick_df[tick,'ticker'])
+    #import historic data
+    temp_price_df <- temp_tick$get_history(start = '1996-01-01', end = '2024-12-31', interval = '1d')[,c(1,7)]
+    #aggregate information annually
+    temp_price_df <- temp_price_df %>%
+      group_by(Year = lubridate::year(date)) %>%
+      summarize(across(adj_close, ~last(.))) %>%
+      mutate(Company = tick_df[tick,'name'])
+    #add ticker information to output data frame
+    tickers_df <- rbind(tickers_df,temp_price_df)
+  }
+  #collect stock price information
+  tickers_df <- tickers_df %>%
+    #assign proper column formats
+    mutate(stock_price = map_dbl(adj_close, ~ if(length(.x) > 0){.x[[1]]}else{NA_real_}),
+           Year = as.character(Year)) %>%
+    #drop adj_close column
+    select(-adj_close)
+  return(tickers_df)
+}
+```
+
+```{r}
 #function to perform all data import operations
-data_import<- function(org_list){
+data_import<- function(input.df,input.indicators){
   #initialize output data frame
   orgs_df <- data.frame()
   #collect information from financial statements
-  for(org in org_list){
+  for(org in c(1:nrow(input.df))){
     #import .xml file
-    temp_doc <- read_xml(paste0("../../research/",org,".xml"))
+    temp_doc <- read_xml(paste0("../../research/",input.df[org,'name'],".xml"))
     #initialize node information from file
     temp_ns <- xml_ns(temp_doc)
     #extract information about all 'Worksheet' nodes...annual information
     temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
     #apply parsing algorithm and assign company indicator
     temp_org_df <- parse_finStatements(temp_wks,seq_along(temp_wks)) %>%
-      add_column(Company=org,.before=2,.name_repair = 'minimal')
+      add_column(Company=input.df[org,'name'],.before=2,.name_repair = 'minimal')
     #add company information to output data frame
     orgs_df <- rbind(orgs_df,temp_org_df)}
+  #include target variable
+  org_stockPrice <- parse_stockPrice(input.df)
+  orgs_df <- merge(x=orgs_df,y=org_stockPrice,by=c('Year','Company'),all.x=TRUE)
+  #include economic indicators
+  econ_indicators <- xd.fred(input.indicators,'1996-01-01','2024-12-31') %>%
+    fill('GDPC1',.direction='updown') %>% 
+    fill('CPALTT01USM657N',.direction='down') %>%
+    mutate(Year = lubridate::year(observation_date)) %>%
+    group_by(Year) %>%
+    summarize(across(where(is.numeric), ~ last(., na.rm = TRUE))) %>%
+    mutate(Year = as.character(Year)) 
+  orgs_df <- merge(x=orgs_df,y=econ_indicators,by='Year',all.x=TRUE)
   #return output data frame
+  orgs_df <- orgs_df %>%
+    mutate_all(~if_else(. == 'NA', NA, .)) %>%
+    select(where(~sum(!is.na(.)) >= 50))
   return(orgs_df)
 }
 ```
 
 ```{r}
-sample_list <- c('State Farm','Berkshire Hathaway','Progressive','Allstate','Liberty Mutual',
-                 'Travelers','USAA','Chubb','Nationwide','Farmers Alliance',
-                 'American Family Ins','AIG','Fairfax Financial','Auto-Owners Ins','Tokio Marine',
-                 'Erie Ins','Berkley Ins','Hartford Fire Ins','Everest Re','CNA')
-data_import(sample_list)
-```
+#reference: https://www.reinsurancene.ws/top-100-u-s-property-casualty-insurance-companies/
+# sample_list <- c('State Farm','Berkshire Hathaway','Progressive','Allstate','Liberty Mutual',
+#                  'Travelers','USAA','Chubb','Nationwide','Farmers Alliance',
+#                  'American Family Ins','AIG','Fairfax Financial','Auto-Owners Ins','Tokio Marine',
+#                  'Erie Ins','Berkley Ins','Hartford Fire Ins','Everest Re','CNA')
 
+#define company names
+sample_names <- c('Berkshire Hathaway A','Berkshire Hathaway B','Progressive','Allstate','Hanover Ins. Group',
+                 'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
+                 'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
+                 'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
+
+#define company tickers...based on yahoo finance
+sample_tickers <- c('brk-a','brk-b','prg','all','thg',
+                    'trv','zurn.sw','cb','ffh.to','sigi',
+                    'alv.de','aig','kmpr','qbe.ax','8766.t',
+                    'aiz','wrb','hig','eg','cna')
+
+#define company local currency
+sample_currency <- c('USD','USD','USD','USD','USD',
+                     'USD','CHF','USD','CAD','USD',
+                     'EUR','USD','USD','AUD','JPY',
+                     'USD','USD','USD','USD','USD')
+
+#initialize input data frame for data import
+input_df <- data.frame(name=sample_names,
+                       ticker=sample_tickers,
+                       currency=sample_currency) 
+
+#GDP, employment no, CPI, retail sales, money supply
+sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS','M2REAL')
+
+#compile data...
+  #1. financial statements
+  #2. economic indicators
+  #3. stock price
+sample_df <- data_import(input_df,sample_econ_indicators)
+```
