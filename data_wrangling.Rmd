@@ -222,15 +222,3 @@ sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS',
 sample_df <- data_import(input_df,sample_econ_indicators)
 colnames(sample_df)
 ```
-
-```{r}
-xd.fred(sample_econ_indicators,'1996-01-01','2024-12-31') %>%
-    fill('GDPC1',.direction='updown') %>%
-    fill('CPALTT01USM657N',.direction='down') %>%
-    mutate(Year = lubridate::year(observation_date)) %>%
-    group_by(Year) %>%
-    summarize(across(where(is.numeric), ~ tail(na.omit(.), 1))) %>%
-    mutate(Year = as.character(Year))
-```
-
-
