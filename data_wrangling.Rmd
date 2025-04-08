@@ -21,15 +21,15 @@ cat(ask_chatgpt("how'd i drop all columns that contain character 'cer'"))
 
 ```{r parse_finStatements}
 #function to parse each worksheet and return a data frame
-parse_finStatements <- function(ws_node, index){
-  ws_name <- xml_attr(ws_node, "Name", ns)
-  rows <- xml_find_all(ws_node, ".//ss:Row", ns)
+parse_finStatements <- function(ws_ns, ws_node, index){
+  ws_name <- xml_attr(ws_node, "Name", ws_ns)
+  rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
   #skip the first 6 rows
   rows <- rows[-(1:6)]
   #extract values per row
   row_data <- map(rows, function(row){
-    cells <- xml_find_all(row, ".//ss:Cell", ns)
-    values <- map_chr(cells, ~ xml_text(xml_find_first(.x, ".//ss:Data", ns)))
+    cells <- xml_find_all(row, ".//ss:Cell", ws_ns)
+    values <- map_chr(cells, ~ xml_text(xml_find_first(.x, ".//ss:Data", ws_ns)))
     return(values)})
   #skip empty worksheets
   if(length(row_data) == 0) return(tibble())  
@@ -125,6 +125,7 @@ parse_stockPrice <- function(tick_df){
     #aggregate information annually
     temp_price_df <- temp_price_df %>%
       group_by(Year = lubridate::year(date)) %>%
+      mutate(adj_close = map_dbl(adj_close, ~ pluck(.x, 1, .default = NA_real_))) %>%
       summarize(across(adj_close, ~last(.))) %>%
       mutate(Company = tick_df[tick,'name'])
     #add ticker information to output data frame
@@ -155,21 +156,21 @@ data_import<- function(input.df,input.indicators){
     #extract information about all 'Worksheet' nodes...annual information
     temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
     #apply parsing algorithm and assign company indicator
-    temp_org_df <- parse_finStatements(temp_wks,seq_along(temp_wks)) %>%
+    temp_org_df <- parse_finStatements(temp_ns,temp_wks,seq_along(temp_wks)) %>%
       add_column(Company=input.df[org,'name'],.before=2,.name_repair = 'minimal')
     #add company information to output data frame
     orgs_df <- rbind(orgs_df,temp_org_df)}
   #include target variable
   org_stockPrice <- parse_stockPrice(input.df)
   orgs_df <- merge(x=orgs_df,y=org_stockPrice,by=c('Year','Company'),all.x=TRUE)
-  #include economic indicators
+  # include economic indicators
   econ_indicators <- xd.fred(input.indicators,'1996-01-01','2024-12-31') %>%
-    fill('GDPC1',.direction='updown') %>% 
+    fill('GDPC1',.direction='updown') %>%
     fill('CPALTT01USM657N',.direction='down') %>%
     mutate(Year = lubridate::year(observation_date)) %>%
     group_by(Year) %>%
-    summarize(across(where(is.numeric), ~ last(., na.rm = TRUE))) %>%
-    mutate(Year = as.character(Year)) 
+    summarize(across(where(is.numeric), ~ tail(na.omit(.), 1))) %>%
+    mutate(Year = as.character(Year))
   orgs_df <- merge(x=orgs_df,y=econ_indicators,by='Year',all.x=TRUE)
   #return output data frame
   orgs_df <- orgs_df %>%
@@ -221,3 +222,15 @@ sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS',
 sample_df <- data_import(input_df,sample_econ_indicators)
 colnames(sample_df)
 ```
+
+```{r}
+xd.fred(sample_econ_indicators,'1996-01-01','2024-12-31') %>%
+    fill('GDPC1',.direction='updown') %>%
+    fill('CPALTT01USM657N',.direction='down') %>%
+    mutate(Year = lubridate::year(observation_date)) %>%
+    group_by(Year) %>%
+    summarize(across(where(is.numeric), ~ tail(na.omit(.), 1))) %>%
+    mutate(Year = as.character(Year))
+```
+
+
