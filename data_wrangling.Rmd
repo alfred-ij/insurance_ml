@@ -1,0 +1,23 @@
+---
+title: "data wrangling"
+author: "stat group"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r libraries & env variables, include=FALSE, echo=FALSE}
+options(scipen=999); `%notin%` <- Negate(`%in%`)
+lib_list <- c('dplyr','tidyr')
+lapply(lib_list, library, character.only=TRUE)
+source('./.Renviron')
+Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
+```
+
+```{r chatgpt_helper}
+cat(ask_chatgpt("how'd i drop all columns that contain character 'cer'"))
+```
+
+```{r}
+
+```
+
