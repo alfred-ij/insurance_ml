@@ -53,3 +53,8 @@ clean_data <- data %>%
   mutate(across(all_of(char_cols), ~ as.factor(as.integer(factor(.x, levels = unique(.x))))))
 head(clean_data)
 ```
+
+```{r}
+write.csv2(clean_data,'../../research/clean_recovery_rates.csv')
+```
+
