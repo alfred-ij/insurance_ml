@@ -173,7 +173,7 @@ filtered_data %>%
          Gross_Indexed_Benefit_Amount = as.factor(case_when(Gross_Indexed_Benefit_Amount > 4 ~ 5,
                                                             .default = Gross_Indexed_Benefit_Amount))) %>%
   #examine sample data
-  sample_n(20)
+  summary()
 ```
 
 ```{r model data}
@@ -272,7 +272,7 @@ print(paste0('Logit R-Squared: ',round(as.numeric(rsq(data.frame(actual=binary_y
 print(summary(logit.model))
 ```
 
-```{r}
+```{r model results}
 data.frame(model=c('MLR','Gaussian','Binomial','Binomial'),
            link=c(NA,'log','probit','logit'),
            rmse=c(.633,3.019,1.938,3.533),
