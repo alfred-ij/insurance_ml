@@ -204,6 +204,7 @@ model_data <- filtered_data %>%
 #examine model data
 summary(model_data)
 ```
+
 ```{r train-test split}
 #set split seed
 set.seed(100)
