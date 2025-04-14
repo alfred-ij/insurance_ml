@@ -1,0 +1,282 @@
+---
+title: "data_intro"
+author: "stat group"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r libraries & env variables, include=FALSE, echo=FALSE}
+options(scipen=999); `%notin%` <- Negate(`%in%`)
+lib_list <- c('dplyr','tidyr','purrr','tibble',
+              'ggplot2','SciViews','bestNormalize',
+              'gridExtra','caret','yardstick')
+lapply(lib_list, library, character.only=TRUE)
+source('./.Renviron')
+Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
+```
+
+```{r chatgpt helper}
+cat(ask_chatgpt("how'd i remap column types with: factor_cols <- c('Disability_Category','OwnOccToAnyTransition_MOD','Integration_with_STD',
+                 'Taxability_Benefits','Gender','Gross_Indexed_Benefit_Amount')
+
+data <- lapply(data[,factor_cols], as.factor)"))
+```
+
+```{r data import}
+#import data
+data <- read.csv2('../../research/clean_recovery_rates.csv',row.names='X') %>%
+  select(-X.1) %>%
+  dplyr::filter(Actual_Recovery_Rate != 0)
+head(data)
+```
+
+```{r create factor columns}
+#define list of factor columns
+factor_cols <- c('Disability_Category','OwnOccToAnyTransition_MOD','Integration_with_STD',
+                 'Taxability_Benefits','Gender','Gross_Indexed_Benefit_Amount')
+#convert columns to factor types
+data[factor_cols] <- lapply(data[factor_cols], as.factor)
+head(data)
+```
+
+```{r correlation matrix}
+#create correlation threshold
+threshold <- 0.5 
+#create correlation matrix
+ref_cor <- data.frame(cor(data[,names(data)[sapply(data,is.numeric)]])) 
+#analyze correlation matrix...filter by threshold value
+cor_data <- data.frame(names = names(ref_cor)) #create a new table for filtered values
+for (col in names(ref_cor)) { #evaluate each column in the correlation matrix
+  cor_vec <- ref_cor[, col] #collect individual column correlation scores
+  cor_data <- cor_data %>%
+    mutate(!!col := case_when( #conditional definition...based on threshold value
+                      abs(cor_vec) >= threshold ~ cor_vec, #when value meets threshold
+                      abs(cor_vec) < threshold ~ NA, #when value violates threshold
+                    ))}
+#display filtered correlation matrix
+cor_data  
+```
+
+```{r multicollinearity filtering}
+#define filtered data frame...without correlated features
+filtered_data <- data %>%
+  select(-c(Actual_Recoveries,Actual_Deaths,Expected_Recoveries,Expected_Deaths))
+#create correlation threshold
+threshold <- 0.5 
+#create correlation matrix
+filtered_ref_cor <- data.frame(cor(filtered_data[,names(filtered_data)[sapply(filtered_data,is.numeric)]])) 
+#analyze correlation matrix...filter by threshold value
+filtered_cor_data <- data.frame(names = names(filtered_ref_cor)) #create a new table for filtered values
+for (col in names(filtered_ref_cor)) { #evaluate each column in the correlation matrix
+  filtered_cor_vec <- filtered_ref_cor[, col] #collect individual column correlation scores
+  filtered_cor_data <- filtered_cor_data %>%
+    mutate(!!col := case_when( #conditional definition...based on threshold value
+                      abs(filtered_cor_vec) >= threshold ~ filtered_cor_vec, #when value meets threshold
+                      abs(filtered_cor_vec) < threshold ~ NA, #when value violates threshold
+                    ))}
+#display filtered correlation matrix
+filtered_cor_data 
+```
+
+```{r target engineering}
+#investigate target variable distribution...distribution shape & outliers
+target_var <- filtered_data %>%
+  ggplot() +
+  geom_boxplot(aes(x=ln(Actual_Recovery_Rate))) +
+  labs(title='Actual Recovery Rate Distribution',
+       x='Actual Recovery Rate') +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#investigate target variable distribution
+transformed_target_var <- filtered_data %>%
+  filter(Actual_Recovery_Rate > .002,ln(Exposures) <= 7.5) %>% #remove outliers
+  ggplot() +
+  geom_boxplot(aes(x=ln(Actual_Recovery_Rate))) + #perform logarithm transformation with SciView::ln()
+  labs(title='Revised Actual Recovery Rate Distribution',
+       subtitle='Logarithm Transformation',
+       x='Transformed Actual Recovery Rate')+
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+#display target variable feature engineering
+grid.arrange(target_var,transformed_target_var,ncol=1)
+```
+
+```{r duration engineering}
+#plot raw duration distribution
+duration <- filtered_data %>%
+  ggplot()+
+  geom_boxplot(aes(x=Duration_12_49))+
+  theme_minimal()+
+  labs(title='Duration Distribution',
+       x='Duration')+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#plot transformed duration distribution
+transformed_duration <- filtered_data %>%
+  filter(Actual_Recovery_Rate > .002,ln(Exposures) <= 7.5) %>%
+  ggplot()+
+  geom_boxplot(aes(x=Duration_12_49^(1/3)))+
+  theme_minimal()+
+  labs(title='Revised Duration Distribution',
+       subtitle = 'Root Transformation',
+       x='Transformed Duration')+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+#display duration feature engineering
+grid.arrange(duration,transformed_duration,ncol=1)
+```
+
+```{r exposures engineering}
+#plot raw exposures distribution
+exposures <- filtered_data %>%
+  ggplot()+
+  geom_boxplot(aes(x=Exposures))+
+  theme_minimal()+
+  labs(title='Exposures Distribution',
+       x='Exposures')+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#plot transformed exposures distribution
+transformed_exposures <- filtered_data %>%
+  filter(Actual_Recovery_Rate > .002,ln(Exposures)<=7.5) %>%
+  ggplot()+
+  geom_boxplot(aes(x=ln(Exposures)))+
+  theme_minimal()+
+  labs(title='Revised Exposures Distribution',
+       subtitle = 'Logarithm Transformation',
+       x='Transformed Exposures')+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+#display exposures feature engineering
+grid.arrange(exposures,transformed_exposures,ncol=1)
+```
+
+```{r categorical mapping, rows.print=20}
+#set sample seed
+set.seed(100)
+#mapping operations
+filtered_data %>% 
+  #map disability category...from 13 to 5 classes, based on similarity
+  mutate(Disability_Category = as.factor(case_when(Disability_Category %in% c(1,6,11)~1,
+                                                   Disability_Category %in% c(2,3,4,12,13)~2,
+                                                   Disability_Category %in% c(8,9)~3,
+                                                   Disability_Category %in% c(7)~4,
+                                                   .default=5))) %>%
+  #drop unknown benefit amounts
+  dplyr::filter(Gross_Indexed_Benefit_Amount != 7) %>% 
+  #map benefit amounts...from 10 to 5, based on percentage composition
+  mutate(Gross_Indexed_Benefit_Amount = as.numeric(Gross_Indexed_Benefit_Amount),
+         Gross_Indexed_Benefit_Amount = as.factor(case_when(Gross_Indexed_Benefit_Amount > 4 ~ 5,
+                                                            .default = Gross_Indexed_Benefit_Amount))) %>%
+  #examine sample data
+  sample_n(20)
+```
+
+```{r model data}
+#define model data...based on investigation inferences
+model_data <- filtered_data %>% 
+  #perform filtering operations
+  dplyr::filter(#drop unknown benefit amount
+                Gross_Indexed_Benefit_Amount != 7,
+                #set lower limit of target variable
+                Actual_Recovery_Rate >= .002,
+                #set upper limit of exposure variable
+                ln(Exposures) <= 7.5) %>% 
+  #perform feature engineering operations
+  mutate(#apply root transformation
+         Duration_12_49 = Duration_12_49^(1/3), 
+         #apply logarithm transformation
+         Exposures = ln(Exposures), 
+         #map disability category...from 13 to 5 classes, based on similarity
+         Disability_Category = as.factor(case_when(Disability_Category %in% c(1,6,11)~1, #back, injury other than back, other musculoskeletal
+                                                   Disability_Category %in% c(2,3,4,12,13)~2, #cancer, circulatory, digestive, respiratory, diabetes
+                                                   Disability_Category %in% c(8,9)~3, #mental & nervous, nervous system
+                                                   Disability_Category %in% c(7)~4, #maternity
+                                                   .default=5)), #other, ill-defined & misc conditions
+         #map benefit amounts...from 10 to 5, based on percentage composition
+         Gross_Indexed_Benefit_Amount = as.numeric(Gross_Indexed_Benefit_Amount), #convert column to numeric format
+         Gross_Indexed_Benefit_Amount = as.factor(case_when(Gross_Indexed_Benefit_Amount > 4 ~ 5, #benefit amounts >= $4000
+                                                            .default = Gross_Indexed_Benefit_Amount))) #benefit amounts < $4000
+#examine model data
+summary(model_data)
+```
+```{r train-test split}
+#set split seed
+set.seed(100)
+#define split criteria
+train_indices <- createDataPartition(model_data$Actual_Recovery_Rate, p = 0.75, list = FALSE)
+#perform split operation...train & test samples
+train <- model_data[train_indices, ]
+test  <- model_data[-train_indices, ]
+#separate samples into predictors (x) & target (y)
+x_train <- train %>% select(-Actual_Recovery_Rate); y_train <- train$Actual_Recovery_Rate
+x_test <- test %>% select(-Actual_Recovery_Rate); y_test <- test$Actual_Recovery_Rate
+#define binary targets...based on actual probabilities
+binary_y_train <- case_when(y_train > .1 ~ 1,.default = 0)
+binary_y_test <- case_when(y_test > .1 ~ 1,.default = 0)
+```
+
+```{r mlr modeling}
+#set modeling seed
+set.seed(100)
+#fit model object...with all columns
+mlr.model <- lm(ln(Actual_Recovery_Rate)~.,data=train)
+#perform predictions with fitted model...using test sample
+mlr.pred <- predict(mlr.model,newdata=x_test)
+#compute rmse & r-squared metrics...using test sample
+print(paste0('MLR RMSE: ',round(as.numeric(rmse(data.frame(actual=ln(y_test),pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),3)))
+print(paste0('MLR R-Squared: ',round(as.numeric(rsq(data.frame(actual=ln(y_test),pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
+print(summary(mlr.model))
+```
+
+```{r gaussian modeling}
+#set modeling seed
+set.seed(100)
+#fit model object...with all columns
+gaussian.model <- glm(Actual_Recovery_Rate~.,data=train, family=gaussian(link='log'))
+#perform predictions with fitted model...using test sample
+gaussian.pred <- predict(gaussian.model,newdata=x_test)
+#compute rmse & r-squared metrics...using test sample
+print(paste0('Gaussian RMSE: ',round(as.numeric(rmse(data.frame(actual=y_test,pred=gaussian.pred),truth=actual,estimate=pred)[1,'.estimate']),3)))
+print(paste0('Gaussian R-Squared: ',round(as.numeric(rsq(data.frame(actual=y_test,pred=gaussian.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
+print(summary(gaussian.model))
+```
+
+```{r binomial modeling...probit}
+#set modeling seed
+set.seed(100)
+#fit model object...with all columns
+probit.model <- glm(Actual_Recovery_Rate~.,data=cbind(x_train,binary_y_train)%>%rename(Actual_Recovery_Rate=binary_y_train), family=binomial(link='probit'))
+#perform predictions with fitted model...using test sample
+probit.pred <- predict(probit.model,newdata=x_test)
+#compute rmse & r-squared metrics...using test sample
+print(paste0('Probit RMSE: ',round(as.numeric(rmse(data.frame(actual=binary_y_test,pred=probit.pred),truth=actual,estimate=pred)[1,'.estimate']),3)))
+print(paste0('Probit R-Squared: ',round(as.numeric(rsq(data.frame(actual=binary_y_test,pred=probit.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
+print(summary(probit.model))
+```
+
+```{r binomial modeling...logit}
+#set modeling seed
+set.seed(100)
+#fit model object...with all columns
+logit.model <- glm(Actual_Recovery_Rate~.,data=cbind(x_train,binary_y_train)%>%rename(Actual_Recovery_Rate=binary_y_train), family=binomial(link='logit'))
+#perform predictions with fitted model...using test sample
+logit.pred <- predict(logit.model,newdata=x_test)
+#compute rmse & r-squared metrics...using test sample
+print(paste0('Logit RMSE: ',round(as.numeric(rmse(data.frame(actual=binary_y_test,pred=logit.pred),truth=actual,estimate=pred)[1,'.estimate']),3)))
+print(paste0('Logit R-Squared: ',round(as.numeric(rsq(data.frame(actual=binary_y_test,pred=logit.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
+print(summary(logit.model))
+```
+
+```{r}
+data.frame(model=c('MLR','Gaussian','Binomial','Binomial'),
+           link=c(NA,'log','probit','logit'),
+           rmse=c(.633,3.019,1.938,3.533),
+           r_squared=c(.77,.52,.52,.52))
+```
+
+
