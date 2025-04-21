@@ -10,14 +10,14 @@ options(scipen=999); `%notin%` <- Negate(`%in%`)
 lib_list <- c('dplyr','tidyr','purrr','tibble',
               'ggplot2','SciViews','bestNormalize',
               'gridExtra','caret','yardstick',
-              'chatgpt')
+              'chatgpt','car')
 lapply(lib_list, library, character.only=TRUE)
 source('./.Renviron')
 Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
 ```
 
 ```{r chatgpt helper}
-cat(ask_chatgpt("is zero therfore a rational answer using this method for the null model?"))
+cat(ask_chatgpt("how'd i plot vif values for the lm model for each predictor?"))
 ```
 
 ```{r data import}
@@ -261,6 +261,22 @@ variance.plot <- function(model){ #plot fitted values vs residuals
 }
 #display variance plot
 variance.plot(mlr.model)
+#display q-q plots
+qqnorm(residuals(mlr.model))
+qqline(residuals(mlr.model))
+#display vif metrics
+vif(mlr.model) %>%
+  as.data.frame() %>%
+  mutate(feature=rownames(vif(mlr.model))) %>%
+  ggplot() +
+  geom_col(aes(y=feature,x=GVIF)) +
+  labs(title='Variance Inflation Factors',
+       subtitle='Using GVIF',
+       x='GVIF',
+       y='Feature')+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) 
 ```
 
 ```{r gaussian modeling}
