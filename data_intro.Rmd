@@ -9,17 +9,15 @@ output: html_document
 options(scipen=999); `%notin%` <- Negate(`%in%`)
 lib_list <- c('dplyr','tidyr','purrr','tibble',
               'ggplot2','SciViews','bestNormalize',
-              'gridExtra','caret','yardstick')
+              'gridExtra','caret','yardstick',
+              'chatgpt')
 lapply(lib_list, library, character.only=TRUE)
 source('./.Renviron')
 Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
 ```
 
 ```{r chatgpt helper}
-cat(ask_chatgpt("how'd i remap column types with: factor_cols <- c('Disability_Category','OwnOccToAnyTransition_MOD','Integration_with_STD',
-                 'Taxability_Benefits','Gender','Gross_Indexed_Benefit_Amount')
-
-data <- lapply(data[,factor_cols], as.factor)"))
+cat(ask_chatgpt("is zero therfore a rational answer using this method for the null model?"))
 ```
 
 ```{r data import}
@@ -221,6 +219,24 @@ binary_y_train <- case_when(y_train > .1 ~ 1,.default = 0)
 binary_y_test <- case_when(y_test > .1 ~ 1,.default = 0)
 ```
 
+```{r null mlr modeling}
+#build null model
+null_mlr.model <- lm(ln(Actual_Recovery_Rate)~1,data=model_data)
+#obtain the mean of the response variable
+response_mean <- mean(model_data$Actual_Recovery_Rate)
+#calculate the total sum of squares (TSS) and residual sum of squares (RSS)
+TSS <- sum((model_data$Actual_Recovery_Rate - response_mean)^2)
+RSS <- sum(null_mlr.model$residuals^2)
+RSS <- min(RSS, TSS)
+#calculate the R-squared value
+R_squared <- 1 - (RSS / TSS)
+#calculate the RMSE
+RMSE <- sqrt(mean(null_mlr.model$residuals^2))
+#print the R-squared value and RMSE
+print(paste("Null MLR R-Squared:", R_squared))
+print(paste("Null MLR RMSE:", RMSE))
+```
+
 ```{r mlr modeling}
 #set modeling seed
 set.seed(100)
@@ -232,6 +248,19 @@ mlr.pred <- predict(mlr.model,newdata=x_test)
 print(paste0('MLR RMSE: ',round(as.numeric(rmse(data.frame(actual=ln(y_test),pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),3)))
 print(paste0('MLR R-Squared: ',round(as.numeric(rsq(data.frame(actual=ln(y_test),pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
 print(summary(mlr.model))
+#homoscedasticity check
+variance.plot <- function(model){ #plot fitted values vs residuals 
+  #save the residuals from the model
+  residuals <- residuals(model)
+  #create the variance plot
+  plot(fitted(model), residuals, xlab = 'fitted values', ylab = 'residuals', 
+       main = 'Variance Plot for Homoscedasticity')
+  
+  # Add a smooth line to the plot
+  lines(lowess(fitted(model), residuals), col = 'red')
+}
+#display variance plot
+variance.plot(mlr.model)
 ```
 
 ```{r gaussian modeling}
@@ -274,10 +303,10 @@ print(summary(logit.model))
 ```
 
 ```{r model results}
-data.frame(model=c('MLR','Gaussian','Binomial','Binomial'),
-           link=c(NA,'log','probit','logit'),
-           rmse=c(.633,3.019,1.938,3.533),
-           r_squared=c(.77,.52,.52,.52))
+data.frame(model=c('Null MLR','MLR','Gaussian','Binomial','Binomial'),
+           link=c(NA,NA,'log','probit','logit'),
+           rmse=c(1.329,.633,3.019,1.938,3.533),
+           r_squared=c(0,.77,.52,.52,.52))
 ```
 
 
