@@ -1,0 +1,274 @@
+---
+title: "data_wrangling"
+author: "stat group"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r libraries & env variables, include=FALSE, echo=FALSE}
+options(scipen=999); `%notin%` <- Negate(`%in%`)
+lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr',
+              'stringr','tidyr','rvest','chatgpt',
+              'xml2','purrr','tibble','yahoofinancer','YRmisc')
+lapply(lib_list, library, character.only=TRUE)
+```
+
+```{r parse_finStatements}
+#function to parse each worksheet and return a data frame
+parse_finStatements <- function(ws_ns, ws_node, index){
+  ws_name <- xml_attr(ws_node, "Name", ws_ns)
+  rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
+  #skip the first 6 rows
+  rows <- rows[-(1:6)]
+  #extract values per row
+  row_data <- map(rows, function(row){
+    cells <- xml_find_all(row, ".//ss:Cell", ws_ns)
+    values <- map_chr(cells, ~ xml_text(xml_find_first(.x, ".//ss:Data", ws_ns)))
+    return(values)})
+  #skip empty worksheets
+  if(length(row_data) == 0) return(tibble())  
+  #pad and bind
+  padded_data <- lapply(row_data, `length<-`, max(lengths(row_data)))
+  parsed_df <- as.data.frame(do.call(rbind, padded_data), stringsAsFactors = FALSE) %>%
+    mutate_all(~if_else(. == 'NA', NA, .)) %>%
+    mutate(across(everything(), as.character))
+  #coerce V2 to numeric
+  v2_numeric <- suppressWarnings(as.numeric(parsed_df$V2))
+  #find row indices where V2 is 1 and 51
+  starts_raw <- which(v2_numeric == 1)
+  ends <- which(v2_numeric == 51)
+  #adjust start indices to be 4 rows earlier
+  starts <- pmax(starts_raw - 4, 1)  # Ensure we don't go below row 1
+  #build valid (non-overlapping) start:end ranges
+  ranges <- list()
+  used_ends <- c()
+  for (i in seq_along(starts)){
+    start <- starts[i]
+    end_candidates <- ends[ends > starts_raw[i]]  # Ensure end is after raw "1"
+    if (length(end_candidates) > 0){
+      end <- end_candidates[1]
+      if (!(end %in% used_ends)){
+        ranges <- append(ranges, list(start:end))
+        used_ends <- c(used_ends, end)}}}
+  #flatten ranges into a vector of unique row indices to shift
+  rows_to_shift <- unique(unlist(ranges))
+  #shift V2–V16 left into V1–V15, set V16 to NA
+  for (i in 1:15){parsed_df[rows_to_shift, paste0("V", i)] <- parsed_df[rows_to_shift, paste0("V", i + 1)]}
+  parsed_df[rows_to_shift, "V16"] <- NA
+  #data clean-up & manipulation
+  parsed_df <- parsed_df %>%
+    mutate(V8 = case_when(V7 %in% c(1996:2024) ~ V7,
+                          .default = NA)) %>%
+    #assign annual indicator
+    fill(V8,.direction='down') %>%
+    #create pivot version...based on annual values
+    pivot_wider(id_cols = c(V1,V2),
+                names_from = V8,
+                values_from = V7,
+                values_fn = list) %>%
+    #collect relevant rows
+    slice(2:110) %>%
+    add_column(col_names=c('na1','gross_liab_prem','gross_prop_prem','gross_comined_prop_liab_prem','gross_other_lines_prem',
+                           'gross_nonprop_reinsurance_prem','total_gross_prem','na2','net_liab_prem',
+                           'net_prop_prem','net_comined_prop_liab_prem','net_other_lines_prem','net_nonprop_reinsurance_prem',
+                           'total_net_prem','na3','net_underwriting_gain','net_investment_gain','total_other_income',
+                           'dividends_to_policyholders','taxes_incurred','net_income','na4','total_assets','na5','prem_incourse','prem_deferred','prem_accured',
+                           'total_liabilities','losses','loss_adjustment_expenses','unearned_prem','capital_paid_up','policyholders_surplus','na6','net_cash_from_operations','na7',
+                           'total_adjusted_capital','control_level_capital','na8','na9','na10','bonds','stocks','real_estate_mortgage_loans','real_estate',
+                           'cash_short-term_investment','contract_loans','derivatives','other_invested_assets','receivable_securities',
+                           'securities_lending_reinvested_collateral_assets','agg_write-ins','cash_invested_assets','na11',
+                           'affiliated_bonds','affiliated_preferred_stocks','affiliated_common_stocks','na12','affiliated_short-term_investments',
+                           'affiliated_real_estate_mortgage_loans','other_affiliated','total_affiliated','total_in-parent_investment','na13',
+                           'pct_affiliated_surplus','na14','net_unrealized_capital','divdends_to_stockholders',
+                           'change_in-surplus_policyholders','na15','gross_liab_losses','gross_prop_losses','gross_comined_prop_liab_losses',
+                           'na30','gross_other_lines_losses','gross_nonprop_reinsurance_losses','total_losses','na16',
+                           'net_liab_losses','net_prop_losses','net_comined_prop_liab_losses','net_other_lines_losses',
+                           'net_nonprop_reinsurance_losses','total_net_losses','na17','na18','earned_prem','incurred_losses',
+                           'incurred_loss_expenses','other_incurred_underwriting_expenses','net_underwriting_gain',
+                           'na19','na20','other_underwriting_expenses_to_net_prem','na21','loss_ratio','na22','net_prem_to_policyholder_surplus','na23','na24',
+                           '1yr_loss_development','na25','1yr_dev_loss_to_policyholders_surplus','na26','na27','2yr_loss_development',
+                           'na28','na29','2yr_dev_loss_to_policyholders_surplus'),
+               .before=2,.name_repair = 'minimal') %>%
+    #collect relevant columns
+    select(-c(V1,V2)) %>%
+    #transpose data frame
+    t() %>%
+    as.data.frame() %>%
+    #extract annual indicator from index
+    rownames_to_column(var='index') %>%
+    #convert data types from list...created by pivot operation
+    mutate(across(where(is.list), ~ map_chr(.x, ~ paste(.x, collapse = ", "))))
+  #assign column names
+  colnames(parsed_df) <- parsed_df[1,]
+  colnames(parsed_df)[1] <- 'Year'
+  parsed_df <- parsed_df[-1,]
+  #return final data frame
+  return(parsed_df)
+}
+```
+
+```{r}
+temp_document <- read_xml('/Users/alfredijeomah/Downloads/SelectAPage_20250616123804.xml')
+temp_nameSpace <- xml_ns(temp_document)
+temp_worksheets <- xml_find_all(temp_document,'.//ss:Worksheet',temp_nameSpace)
+```
+
+```{r}
+parse_earnedPremium <- function(ws_ns, ws_node, index){
+  ws_name <- xml_attr(ws_node, "Name", ws_ns)
+  rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
+  #skip the first 6 rows
+  #rows <- rows[-(1:6)]
+  #extract values per row
+  row_data <- map(rows, function(row){
+    cells <- xml_find_all(row, ".//ss:Cell", ws_ns)
+    values <- map_chr(cells, ~ xml_text(xml_find_first(.x, ".//ss:Data", ws_ns)))
+    return(values)})
+  #skip empty worksheets
+  if(length(row_data) == 0) return(tibble())  
+  #pad and bind
+  padded_data <- lapply(row_data, `length<-`, max(lengths(row_data)))
+  parsed_df <- as.data.frame(do.call(rbind, padded_data), stringsAsFactors = FALSE) %>%
+    mutate_all(~if_else(. == 'NA', NA, .)) %>%
+    mutate(across(everything(), as.character)) 
+  title_str <- parsed_df[1,'V2']
+  parsed_df <- parsed_df %>%
+    slice(-c(1:7)) %>%
+    select(V2,V3,V8,V9,V10,V11) %>%
+    rename(lob_index=V2,lob=V3,net_written_prem=V8,prior_unearned_prem=V9,unearned_prem=V10,earned_prem=V11) %>%
+    mutate(lob_index=round(as.numeric(lob_index),1),
+           across(c(net_written_prem,prior_unearned_prem,unearned_prem,earned_prem),as.numeric),
+           year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str)))
+  return(parsed_df)
+}
+
+parse_earnedPremium(temp_nameSpace,temp_worksheets,seq_along(temp_worksheets))
+```
+
+```{r}
+
+```
+
+
+```{r parse_stockPrice}
+#get historical market data
+parse_stockPrice <- function(tick_df){
+  tickers_df <- data.frame()
+  for(tick in c(1:nrow(tick_df))){
+    #initialize ticker
+    temp_tick <- Ticker$new(tick_df[tick,'ticker'])
+    #import historic data
+    temp_price_df <- temp_tick$get_history(start = '1996-01-01', end = '2024-12-31', interval = '1d')[,c(1,7)]
+    #aggregate information annually
+    temp_price_df <- temp_price_df %>%
+      group_by(Year = lubridate::year(date)) %>%
+      mutate(adj_close = map_dbl(adj_close, ~ pluck(.x, 1, .default = NA_real_))) %>%
+      summarize(across(adj_close, ~last(.))) %>%
+      mutate(Company = tick_df[tick,'name'])
+    #add ticker information to output data frame
+    tickers_df <- rbind(tickers_df,temp_price_df)
+  }
+  #collect stock price information
+  tickers_df <- tickers_df %>%
+    #assign proper column formats
+    mutate(stock_price = map_dbl(adj_close, ~ if(length(.x) > 0){.x[[1]]}else{NA_real_}),
+           Year = as.character(Year)) %>%
+    #drop adj_close column
+    select(-adj_close)
+  return(tickers_df)
+}
+```
+
+```{r data_import}
+#function to perform all data import operations
+data_import<- function(input.df,input.indicators){
+  #initialize output data frame
+  orgs_df <- data.frame()
+  #collect information from financial statements
+  for(org in c(1:nrow(input.df))){
+    #import .xml file
+    temp_doc <- read_xml(paste0("../../research/",input.df[org,'name'],".xml"))
+    #initialize node information from file
+    temp_ns <- xml_ns(temp_doc)
+    #extract information about all 'Worksheet' nodes...annual information
+    temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
+    #apply parsing algorithm and assign company indicator
+    temp_org_df <- parse_finStatements(temp_ns,temp_wks,seq_along(temp_wks)) %>%
+      add_column(Company=input.df[org,'name'],.before=2,.name_repair = 'minimal')
+    #add company information to output data frame
+    orgs_df <- rbind(orgs_df,temp_org_df)}
+  #include target variable
+  org_stockPrice <- parse_stockPrice(input.df)
+  orgs_df <- merge(x=orgs_df,y=org_stockPrice,by=c('Year','Company'),all.x=TRUE)
+  # include economic indicators
+  econ_indicators <- xd.fred(input.indicators,'1996-01-01','2024-12-31') %>%
+    fill('GDPC1',.direction='updown') %>%
+    fill('CPALTT01USM657N',.direction='down') %>%
+    mutate(Year = lubridate::year(observation_date)) %>%
+    group_by(Year) %>%
+    summarize(across(where(is.numeric), ~ tail(na.omit(.), 1))) %>%
+    mutate(Year = as.character(Year))
+  orgs_df <- merge(x=orgs_df,y=econ_indicators,by='Year',all.x=TRUE)
+  #return output data frame
+  orgs_df <- orgs_df %>%
+    mutate_all(~if_else(. == 'NA', NA, .)) %>%
+    select(-contains('na'))
+  return(orgs_df)
+}
+```
+
+```{r initialize parameters}
+#reference: https://www.reinsurancene.ws/top-100-u-s-property-casualty-insurance-companies/
+# sample_list <- c('State Farm','Berkshire Hathaway','Progressive','Allstate','Liberty Mutual',
+#                  'Travelers','USAA','Chubb','Nationwide','Farmers Alliance',
+#                  'American Family Ins','AIG','Fairfax Financial','Auto-Owners Ins','Tokio Marine',
+#                  'Erie Ins','Berkley Ins','Hartford Fire Ins','Everest Re','CNA')
+
+#define company names
+sample_names <- c('Berkshire Hathaway A','Berkshire Hathaway B','Progressive','Allstate','Hanover Ins. Group',
+                  'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
+                  'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
+                  'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
+
+#define company tickers...based on yahoo finance
+sample_tickers <- c('brk-a','brk-b','prg','all','thg',
+                    'trv','zurn.sw','cb','ffh.to','sigi',
+                    'alv.de','aig','kmpr','qbe.ax','8766.t',
+                    'aiz','wrb','hig','eg','cna')
+
+#define company local currency
+sample_currency <- c('USD','USD','USD','USD','USD',
+                     'USD','CHF','USD','CAD','USD',
+                     'EUR','USD','USD','AUD','JPY',
+                     'USD','USD','USD','USD','USD')
+
+#initialize input data frame for data import
+input_df <- data.frame(name=sample_names,
+                       ticker=sample_tickers,
+                       currency=sample_currency) 
+
+#real GDP, employment no, CPI, retail sales, money supply
+sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS','M2REAL')
+```
+
+```{r}
+#compile data...
+  #1. financial statements
+  #2. economic indicators
+  #3. stock price
+sample_df <- data_import(input_df,sample_econ_indicators)
+colnames(sample_df)
+```
+
+```{r}
+head(sample_df)
+```
+
+```{r,rows.print=20}
+sample_df %>%
+  mutate(across(c(losses,loss_adjustment_expenses,total_net_prem,unearned_prem,loss_ratio),as.numeric)) %>%
+  mutate(loss_ratio_2=((losses+loss_adjustment_expenses)/loss_ratio)+unearned_prem) %>%
+  select(Year,Company,loss_ratio,loss_ratio_2) %>%
+  head(12)
+```
+
