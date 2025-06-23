@@ -13,9 +13,9 @@ lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr',
 lapply(lib_list, library, character.only=TRUE)
 ```
 
-```{r parse_finStatements}
+```{r parse_generalInfo}
 #function to parse each worksheet and return a data frame
-parse_finStatements <- function(ws_ns, ws_node, index){
+parse_generalInfo <- function(ws_ns, ws_node, index){
   ws_name <- xml_attr(ws_node, "Name", ws_ns)
   rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
   #skip the first 6 rows
@@ -83,9 +83,9 @@ parse_finStatements <- function(ws_ns, ws_node, index){
                            'change_in-surplus_policyholders','na15','gross_liab_losses','gross_prop_losses','gross_comined_prop_liab_losses',
                            'na30','gross_other_lines_losses','gross_nonprop_reinsurance_losses','total_losses','na16',
                            'net_liab_losses','net_prop_losses','net_comined_prop_liab_losses','net_other_lines_losses',
-                           'net_nonprop_reinsurance_losses','total_net_losses','na17','na18','earned_prem','incurred_losses',
-                           'incurred_loss_expenses','other_incurred_underwriting_expenses','net_underwriting_gain',
-                           'na19','na20','other_underwriting_expenses_to_net_prem','na21','loss_ratio','na22','net_prem_to_policyholder_surplus','na23','na24',
+                           'net_nonprop_reinsurance_losses','total_net_losses','na17','na18','earned_prem_percentage','incurred_losses',
+                           'incurred_loss_expenses','other_incurred_underwriting_expenses','nwg',
+                           'na19','na20','other_underwriting_expenses_to_net_prem','na21','imported_loss_ratio','na22','net_prem_to_policyholder_surplus','na23','na24',
                            '1yr_loss_development','na25','1yr_dev_loss_to_policyholders_surplus','na26','na27','2yr_loss_development',
                            'na28','na29','2yr_dev_loss_to_policyholders_surplus'),
                .before=2,.name_repair = 'minimal') %>%
@@ -107,14 +107,9 @@ parse_finStatements <- function(ws_ns, ws_node, index){
 }
 ```
 
-```{r}
-temp_document <- read_xml('/Users/alfredijeomah/Downloads/SelectAPage_20250616123804.xml')
-temp_nameSpace <- xml_ns(temp_document)
-temp_worksheets <- xml_find_all(temp_document,'.//ss:Worksheet',temp_nameSpace)
-```
-
-```{r}
-parse_earnedPremium <- function(ws_ns, ws_node, index){
+```{r parse_earnedPrem}
+#function to parse each worksheet and return a data frame
+parse_earnedPrem <- function(ws_ns, ws_node, index){
   ws_name <- xml_attr(ws_node, "Name", ws_ns)
   rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
   #skip the first 6 rows
@@ -136,19 +131,16 @@ parse_earnedPremium <- function(ws_ns, ws_node, index){
     slice(-c(1:7)) %>%
     select(V2,V3,V8,V9,V10,V11) %>%
     rename(lob_index=V2,lob=V3,net_written_prem=V8,prior_unearned_prem=V9,unearned_prem=V10,earned_prem=V11) %>%
-    mutate(lob_index=round(as.numeric(lob_index),1),
-           across(c(net_written_prem,prior_unearned_prem,unearned_prem,earned_prem),as.numeric),
-           year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str)))
+    mutate(suppressWarnings(round(as.numeric(lob_index), 1)),
+           across(c(net_written_prem,prior_unearned_prem,unearned_prem,earned_prem),~ suppressWarnings(as.numeric(.x))),
+           year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str))) %>%
+    filter(lob=='TOTALS') %>%
+    select(year,earned_prem)
+  parsed_df <- parsed_df %>%
+    mutate(year=year-row_number()+1)
   return(parsed_df)
 }
-
-parse_earnedPremium(temp_nameSpace,temp_worksheets,seq_along(temp_worksheets))
 ```
-
-```{r}
-
-```
-
 
 ```{r parse_stockPrice}
 #get historical market data
@@ -187,13 +179,17 @@ data_import<- function(input.df,input.indicators){
   #collect information from financial statements
   for(org in c(1:nrow(input.df))){
     #import .xml file
-    temp_doc <- read_xml(paste0("../../research/",input.df[org,'name'],".xml"))
+    temp_general_doc <- read_xml(paste0("../../research/fin_statements/general/",input.df[org,'name'],".xml"))
+    temp_ep_doc <- read_xml(paste0("../../research/fin_statements/earned_prem/",input.df[org,'name'],".xml"))
     #initialize node information from file
-    temp_ns <- xml_ns(temp_doc)
+    temp_general_ns <- xml_ns(temp_general_doc)
+    temp_ep_ns <- xml_ns(temp_ep_doc)
     #extract information about all 'Worksheet' nodes...annual information
-    temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
+    temp_general_wks <- xml_find_all(temp_general_doc, ".//ss:Worksheet", temp_general_ns)
+    temp_ep_wks <- xml_find_all(temp_ep_doc, ".//ss:Worksheet", temp_ep_ns)
     #apply parsing algorithm and assign company indicator
-    temp_org_df <- parse_finStatements(temp_ns,temp_wks,seq_along(temp_wks)) %>%
+    temp_org_df <- parse_generalInfo(temp_general_ns,temp_general_wks,seq_along(temp_general_wks)) %>% 
+      merge(y=parse_earnedPrem(temp_ep_ns,temp_ep_wks,seq_along(temp_ep_wks)),by.x='Year',by.y='year') %>%
       add_column(Company=input.df[org,'name'],.before=2,.name_repair = 'minimal')
     #add company information to output data frame
     orgs_df <- rbind(orgs_df,temp_org_df)}
@@ -257,18 +253,23 @@ sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS',
   #2. economic indicators
   #3. stock price
 sample_df <- data_import(input_df,sample_econ_indicators)
-colnames(sample_df)
+```
+
+```{r,rows.print=20,fig.width=20}
+sample_df %>%
+  mutate(across(c(Year,losses,loss_adjustment_expenses,earned_prem),~ suppressWarnings(as.numeric(.x)))) %>%
+  mutate(loss_ratio=(losses+loss_adjustment_expenses)/earned_prem) %>%
+  select(Year,Company,loss_ratio) %>%
+  na.omit() %>%
+  ggplot(aes(x=Year,y=loss_ratio)) +
+  geom_point() +
+  theme_minimal() +
+  facet_wrap(~as.factor(Company)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_x_continuous(breaks = seq(min(sample_df$Year),max(sample_df$Year), by = 1)) 
 ```
 
 ```{r}
-head(sample_df)
-```
-
-```{r,rows.print=20}
-sample_df %>%
-  mutate(across(c(losses,loss_adjustment_expenses,total_net_prem,unearned_prem,loss_ratio),as.numeric)) %>%
-  mutate(loss_ratio_2=((losses+loss_adjustment_expenses)/loss_ratio)+unearned_prem) %>%
-  select(Year,Company,loss_ratio,loss_ratio_2) %>%
-  head(12)
+colnames(sample_df)
 ```
 
