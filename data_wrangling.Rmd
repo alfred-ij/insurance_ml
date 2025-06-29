@@ -13,6 +13,14 @@ lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr',
 lapply(lib_list, library, character.only=TRUE)
 ```
 
+```{r}
+temp_doc <- read_xml('/Users/alfredijeomah/Desktop/SelectAPage_20250629033730.xml')
+#initialize node information from file
+temp_ns <- xml_ns(temp_doc)
+#extract information about all 'Worksheet' nodes...annual information
+temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
+```
+
 ```{r parse_generalInfo}
 #function to parse each worksheet and return a data frame
 parse_generalInfo <- function(ws_ns, ws_node, index){
@@ -142,6 +150,40 @@ parse_earnedPrem <- function(ws_ns, ws_node, index){
 }
 ```
 
+```{r parse_paidExpenses}
+parse_paidExpenses <- function(ws_ns, ws_node, index){
+  ws_name <- xml_attr(ws_node, "Name", ws_ns)
+  rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
+  #skip the first 6 rows
+  #rows <- rows[-(1:6)]
+  #extract values per row
+  row_data <- map(rows, function(row){
+    cells <- xml_find_all(row, ".//ss:Cell", ws_ns)
+    values <- map_chr(cells, ~ xml_text(xml_find_first(.x, ".//ss:Data", ws_ns)))
+    return(values)})
+  #skip empty worksheets
+  if(length(row_data) == 0) return(tibble())  
+  #pad and bind
+  padded_data <- lapply(row_data, `length<-`, max(lengths(row_data)))
+  parsed_df <- as.data.frame(do.call(rbind, padded_data), stringsAsFactors = FALSE) %>%
+    mutate_all(~if_else(. == 'NA', NA, .)) %>%
+    mutate(across(everything(), as.character)) 
+  title_str <- parsed_df[1,'V1']
+  parsed_df <- parsed_df %>%
+    slice(-c(1:6)) %>%
+    select(V2,V3,V7,V8,V9,V11) %>%
+    rename(label=V2,description=V3,lae=V7,underwriting_exp=V8,investment_exp=V9,total_exp=V11) %>%
+    mutate(across(c(lae,underwriting_exp,investment_exp,total_exp),~ suppressWarnings(as.numeric(.x))),
+           year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str))) %>%
+    filter(label=='TOTAL EXPENSES PAID (Lines 25 - 26 + 27 - 28 + 29)') %>%
+    select(year,label,lae,underwriting_exp,investment_exp,total_exp)%>%
+    mutate(year=year-row_number()+1)
+  return(parsed_df)
+}
+parse_paidExpenses(temp_ns,temp_wks,seq_along(temp_wks))
+```
+
+
 ```{r parse_stockPrice}
 #get historical market data
 parse_stockPrice <- function(tick_df){
@@ -222,21 +264,21 @@ data_import<- function(input.df,input.indicators){
 
 #define company names
 pc_names <- c('Berkshire Hathaway A','Berkshire Hathaway B','Progressive','Allstate','Hanover Ins. Group',
-                  'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
-                  'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
-                  'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
+              'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
+              'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
+              'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
 
 #define company tickers...based on yahoo finance
 pc_tickers <- c('brk-a','brk-b','prg','all','thg',
-                    'trv','zurn.sw','cb','ffh.to','sigi',
-                    'alv.de','aig','kmpr','qbe.ax','8766.t',
-                    'aiz','wrb','hig','eg','cna')
+                'trv','zurn.sw','cb','ffh.to','sigi',
+                'alv.de','aig','kmpr','qbe.ax','8766.t',
+                'aiz','wrb','hig','eg','cna')
 
 #define company local currency
 pc_currency <- c('USD','USD','USD','USD','USD',
-                     'USD','CHF','USD','CAD','USD',
-                     'EUR','USD','USD','AUD','JPY',
-                     'USD','USD','USD','USD','USD')
+                 'USD','CHF','USD','CAD','USD',
+                 'EUR','USD','USD','AUD','JPY',
+                 'USD','USD','USD','USD','USD')
 
 #initialize input data frame for data import
 pcInput_df <- data.frame(name=pc_names,
@@ -279,33 +321,33 @@ eda_df <- base_df %>%
          return_on_investments=net_investment_gain/policyholders_surplus,
          surplus_growth=`change_in-surplus_policyholders`/(policyholders_surplus-`change_in-surplus_policyholders`),
          assets_to_surplus=total_assets/policyholders_surplus,
-         `1yrDev_to_surplus`=`1yr_loss_development`/policyholders_surplus) %>% 
+         oneYRDev_to_surplus=`1yr_loss_development`/policyholders_surplus) %>% 
   select(Year,Company,return_on_surplus,return_on_assets,liab_to_liquidAssets,inCoursePrem_to_surplus,
          writtenPrem_to_surplus,lossReserves_to_surplus,debt_to_equity,loss_ratio,uw_margin,investment_income,
-         investment_yield,return_on_investments,stock_price,surplus_growth,`1yrDev_to_surplus`,
-         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL)
+         investment_yield,return_on_investments,stock_price,surplus_growth,oneYRDev_to_surplus,
+         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL) %>%
+  na.omit()
 ```
-
 
 ```{r loss ratio ts by company,rows.print=20,fig.width=20}
 eda_df %>%
-  na.omit() %>%
-  ggplot(aes(x=Year,y=return_on_assets)) +
-  geom_col() +
+  mutate(date=as.Date(paste0(Year,'/12/31'))) %>%
+  ggplot(aes(x=date,y=writtenPrem_to_surplus)) +
+  geom_line() + 
   theme_minimal() +
   facet_wrap(~as.factor(Company)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ```
 
 ```{r}
-eda_df %
+eda_df %>% summary()
 ```
 
 ```{r multi-collinearity analysis}
 #create correlation threshold
-threshold <- 0.5
+threshold <- 0.7
 #create correlation matrix
-ref_cor <- data.frame(cor(eda_df[,names(eda_df)[sapply(eda_df,is.numeric)]]%>%na.omit()))
+ref_cor <- data.frame(cor(eda_df[,names(eda_df)[sapply(eda_df,is.numeric)]]))
 #analyze correlation matrix...filter by threshold value
 cor_data <- data.frame(names = names(ref_cor)) #create a new table for filtered values
 for (col in names(ref_cor)) { #evaluate each column in the correlation matrix
@@ -317,5 +359,15 @@ for (col in names(ref_cor)) { #evaluate each column in the correlation matrix
                     ))}
 #display filtered correlation matrix
 cor_data  
+
+#correlated combinations
+  #return_on_assets->return_on_surplus
+  #liab_to_liquidAssets->loss_ratio
+  #lossReserves_to_surplus->debt_to_equity
+  #GDPC1->PAYEMS->MRTSSM44000USS->M2REAL
+```
+
+```{r}
+
 ```
 
