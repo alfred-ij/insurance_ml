@@ -9,16 +9,9 @@ output: pdf_document
 options(scipen=999); `%notin%` <- Negate(`%in%`)
 lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr',
               'stringr','tidyr','rvest','chatgpt',
-              'xml2','purrr','tibble','yahoofinancer','YRmisc')
+              'xml2','purrr','tibble','yahoofinancer','YRmisc',
+              'caret','ModelMetrics','yardstick','car')
 lapply(lib_list, library, character.only=TRUE)
-```
-
-```{r}
-temp_doc <- read_xml('/Users/alfredijeomah/Desktop/SelectAPage_20250629033730.xml')
-#initialize node information from file
-temp_ns <- xml_ns(temp_doc)
-#extract information about all 'Worksheet' nodes...annual information
-temp_wks <- xml_find_all(temp_doc, ".//ss:Worksheet", temp_ns)
 ```
 
 ```{r parse_generalInfo}
@@ -151,6 +144,7 @@ parse_earnedPrem <- function(ws_ns, ws_node, index){
 ```
 
 ```{r parse_paidExpenses}
+#function to parse each worksheet and return a data frame
 parse_paidExpenses <- function(ws_ns, ws_node, index){
   ws_name <- xml_attr(ws_node, "Name", ws_ns)
   rows <- xml_find_all(ws_node, ".//ss:Row", ws_ns)
@@ -176,13 +170,11 @@ parse_paidExpenses <- function(ws_ns, ws_node, index){
     mutate(across(c(lae,underwriting_exp,investment_exp,total_exp),~ suppressWarnings(as.numeric(.x))),
            year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str))) %>%
     filter(label=='TOTAL EXPENSES PAID (Lines 25 - 26 + 27 - 28 + 29)') %>%
-    select(year,label,lae,underwriting_exp,investment_exp,total_exp)%>%
+    select(year,lae,underwriting_exp,investment_exp,total_exp)%>%
     mutate(year=year-row_number()+1)
   return(parsed_df)
 }
-parse_paidExpenses(temp_ns,temp_wks,seq_along(temp_wks))
 ```
-
 
 ```{r parse_stockPrice}
 #get historical market data
@@ -223,15 +215,19 @@ data_import<- function(input.df,input.indicators){
     #import .xml file
     temp_general_doc <- read_xml(paste0("../../research/fin_statements/general/",input.df[org,'name'],".xml"))
     temp_ep_doc <- read_xml(paste0("../../research/fin_statements/earned_prem/",input.df[org,'name'],".xml"))
+    temp_paidExp_doc <- read_xml(paste0("../../research/fin_statements/paid_expenses/",input.df[org,'name'],".xml"))
     #initialize node information from file
     temp_general_ns <- xml_ns(temp_general_doc)
     temp_ep_ns <- xml_ns(temp_ep_doc)
+    temp_paidExp_ns <- xml_ns(temp_paidExp_doc)
     #extract information about all 'Worksheet' nodes...annual information
     temp_general_wks <- xml_find_all(temp_general_doc, ".//ss:Worksheet", temp_general_ns)
     temp_ep_wks <- xml_find_all(temp_ep_doc, ".//ss:Worksheet", temp_ep_ns)
+    temp_paidExp_wks <- xml_find_all(temp_paidExp_doc, ".//ss:Worksheet", temp_paidExp_ns)
     #apply parsing algorithm and assign company indicator
     temp_org_df <- parse_generalInfo(temp_general_ns,temp_general_wks,seq_along(temp_general_wks)) %>% 
       merge(y=parse_earnedPrem(temp_ep_ns,temp_ep_wks,seq_along(temp_ep_wks)),by.x='Year',by.y='year') %>%
+      merge(y=parse_paidExpenses(temp_paidExp_ns,temp_paidExp_wks,seq_along(temp_paidExp_wks)),by.x='Year',by.y='year') %>%
       add_column(Company=input.df[org,'name'],.before=2,.name_repair = 'minimal')
     #add company information to output data frame
     orgs_df <- rbind(orgs_df,temp_org_df)}
@@ -301,7 +297,7 @@ base_df <- data_import(pcInput_df,pc_econIndicators)
 eda_df <- base_df %>%
   mutate(across(c(net_income,policyholders_surplus,total_assets,total_liabilities,net_cash_from_operations,
                   unearned_prem,earned_prem,net_investment_gain,prem_deferred,prem_incourse,total_net_prem,
-                  losses,loss_adjustment_expenses,net_underwriting_gain,`change_in-surplus_policyholders`,
+                  losses,lae,net_underwriting_gain,`change_in-surplus_policyholders`,
                   `1yr_loss_development`),
                 ~suppressWarnings(as.numeric(.x))),
          return_on_surplus=net_income/policyholders_surplus,
@@ -312,27 +308,30 @@ eda_df <- base_df %>%
                                                      net_investment_gain), #cash
          inCoursePrem_to_surplus=prem_incourse/policyholders_surplus,
          writtenPrem_to_surplus=total_net_prem/policyholders_surplus,
-         lossReserves_to_surplus=(losses+loss_adjustment_expenses)/policyholders_surplus,
+         lossReserves_to_surplus=(losses+lae)/policyholders_surplus,
          debt_to_equity=total_liabilities/policyholders_surplus,
-         loss_ratio=(losses+loss_adjustment_expenses)/earned_prem,
+         loss_ratio=(losses+lae)/earned_prem,
+         combined_ratio=(losses+lae+underwriting_exp)/earned_prem,
+         operating_ratio=(losses+lae+total_exp-net_investment_gain)/earned_prem,
          uw_margin=net_underwriting_gain/total_net_prem,
          investment_income=net_investment_gain/earned_prem,
          investment_yield=net_investment_gain/net_cash_from_operations,
          return_on_investments=net_investment_gain/policyholders_surplus,
          surplus_growth=`change_in-surplus_policyholders`/(policyholders_surplus-`change_in-surplus_policyholders`),
          assets_to_surplus=total_assets/policyholders_surplus,
-         oneYRDev_to_surplus=`1yr_loss_development`/policyholders_surplus) %>% 
+         oneYRDev_to_surplus=`1yr_loss_development`/policyholders_surplus,
+         Company=as.factor(Company),Year=as.factor(Year)) %>% 
   select(Year,Company,return_on_surplus,return_on_assets,liab_to_liquidAssets,inCoursePrem_to_surplus,
          writtenPrem_to_surplus,lossReserves_to_surplus,debt_to_equity,loss_ratio,uw_margin,investment_income,
          investment_yield,return_on_investments,stock_price,surplus_growth,oneYRDev_to_surplus,
-         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL) %>%
+         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL,combined_ratio,operating_ratio) %>%
   na.omit()
 ```
 
 ```{r loss ratio ts by company,rows.print=20,fig.width=20}
 eda_df %>%
   mutate(date=as.Date(paste0(Year,'/12/31'))) %>%
-  ggplot(aes(x=date,y=writtenPrem_to_surplus)) +
+  ggplot(aes(x=lossReserves_to_surplus,y=loss_ratio)) +
   geom_line() + 
   theme_minimal() +
   facet_wrap(~as.factor(Company)) +
@@ -359,15 +358,73 @@ for (col in names(ref_cor)) { #evaluate each column in the correlation matrix
                     ))}
 #display filtered correlation matrix
 cor_data  
-
 #correlated combinations
   #return_on_assets->return_on_surplus
-  #liab_to_liquidAssets->loss_ratio
+  #liab_to_liquidAssets->loss_ratio->operating_ratio->combined_ratio
   #lossReserves_to_surplus->debt_to_equity
   #GDPC1->PAYEMS->MRTSSM44000USS->M2REAL
 ```
 
-```{r}
-
+```{r lm setup}
+#set split seed
+set.seed(100)
+#define correlated columns
+correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL',
+                     'PAYEMS','MRTSSM44000USS','return_on_assets','GDPC1','CPALTT01USM657N','Company')
+#define split criteria
+lm_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
+#perform split operation...train & test samples
+lm_train <- eda_df[lm_trainIndices, names(eda_df) %notin% correlated_cols]
+lm_test  <- eda_df[-lm_trainIndices, names(eda_df) %notin% correlated_cols]
+#separate samples into predictors (x) & target (y)
+lm_XTrain <- train %>% dplyr::select(-c(loss_ratio)); lm_YTrain <- train$loss_ratio
+lm_XTest <- test %>% dplyr::select(-c(loss_ratio)); lm_YTest <- test$loss_ratio
 ```
 
+```{r lm model fit}
+#set modeling seed
+set.seed(100)
+#fit model object...with all columns
+mlr.model <- lm(loss_ratio~.,data=lm_train)
+#perform predictions with fitted model...using test sample
+mlr.pred <- predict(mlr.model,newdata=lm_XTest)
+#compute rmse & r-squared metrics...using test sample
+print(paste0('Test MLR RMSE: ',round(as.numeric(ModelMetrics::rmse(actual=lm_YTest,pred=mlr.pred)),3)))
+print(paste0('Test MLR R-Squared: ',round(as.numeric(rsq(data.frame(actual=lm_YTest,pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
+```
+```{r lm diagnostics}
+#homoscedasticity check
+variance.plot <- function(model){ #plot fitted values vs residuals 
+  #save the residuals from the model
+  residuals <- residuals(model)
+  #create the variance plot
+  plot(fitted(model), residuals, xlab = 'fitted values', ylab = 'residuals', 
+       main = 'variance plot for homoscedasticity')
+  
+  # Add a smooth line to the plot
+  lines(lowess(fitted(model), residuals), col = 'red')
+}
+#display variance plot
+variance.plot(mlr.model)
+#display q-q plots
+qqnorm(residuals(mlr.model),
+       main='normal q-q plot',
+       xlab='theoretical quantiles',
+       ylab='sample quantiles')
+qqline(residuals(mlr.model))
+#display cook's distance metrics
+plot(mlr.model,4,main=paste0("cook's distance with cutoff of ~",round(mean(cooks.distance(mlr.model))*3,3)))
+#display vif metrics
+vif(mlr.model) %>%
+  as.data.frame() %>%
+  mutate(feature=rownames(vif(mlr.model))) %>%
+  ggplot() +
+  geom_col(aes(y=feature,x=GVIF)) +
+  labs(title='variance inflation factors',
+       subtitle='using gvif',
+       x='gvif',
+       y='feature')+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) 
+```
