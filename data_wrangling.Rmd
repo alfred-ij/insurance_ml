@@ -221,55 +221,101 @@ data_import<- function(input.df,input.indicators){
 #                  'Erie Ins','Berkley Ins','Hartford Fire Ins','Everest Re','CNA')
 
 #define company names
-sample_names <- c('Berkshire Hathaway A','Berkshire Hathaway B','Progressive','Allstate','Hanover Ins. Group',
+pc_names <- c('Berkshire Hathaway A','Berkshire Hathaway B','Progressive','Allstate','Hanover Ins. Group',
                   'Travelers','Zurich Ins. Group','Chubb','Fairfax Financial','Selective Ins. Group',
                   'Allianz SE','AIG','Kemper Corp.','QBE Ins. Group','Tokio Marine',
                   'Assurant Inc.','Berkley Ins.','Hartford Fire Ins.','Everest Re.','CNA')
 
 #define company tickers...based on yahoo finance
-sample_tickers <- c('brk-a','brk-b','prg','all','thg',
+pc_tickers <- c('brk-a','brk-b','prg','all','thg',
                     'trv','zurn.sw','cb','ffh.to','sigi',
                     'alv.de','aig','kmpr','qbe.ax','8766.t',
                     'aiz','wrb','hig','eg','cna')
 
 #define company local currency
-sample_currency <- c('USD','USD','USD','USD','USD',
+pc_currency <- c('USD','USD','USD','USD','USD',
                      'USD','CHF','USD','CAD','USD',
                      'EUR','USD','USD','AUD','JPY',
                      'USD','USD','USD','USD','USD')
 
 #initialize input data frame for data import
-input_df <- data.frame(name=sample_names,
-                       ticker=sample_tickers,
-                       currency=sample_currency) 
+pcInput_df <- data.frame(name=pc_names,
+                         ticker=pc_tickers,
+                         currency=pc_currency) 
 
 #real GDP, employment no, CPI, retail sales, money supply
-sample_econ_indicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS','M2REAL')
+pc_econIndicators <- c('GDPC1','PAYEMS','CPALTT01USM657N','MRTSSM44000USS','M2REAL')
 ```
 
-```{r}
+```{r define base data}
 #compile data...
   #1. financial statements
   #2. economic indicators
   #3. stock price
-sample_df <- data_import(input_df,sample_econ_indicators)
+base_df <- data_import(pcInput_df,pc_econIndicators)
 ```
 
-```{r,rows.print=20,fig.width=20}
-sample_df %>%
-  mutate(across(c(Year,losses,loss_adjustment_expenses,earned_prem),~ suppressWarnings(as.numeric(.x)))) %>%
-  mutate(loss_ratio=(losses+loss_adjustment_expenses)/earned_prem) %>%
-  select(Year,Company,loss_ratio) %>%
+```{r define columns from literature review,rows.print=50}
+eda_df <- base_df %>%
+  mutate(across(c(net_income,policyholders_surplus,total_assets,total_liabilities,net_cash_from_operations,
+                  unearned_prem,earned_prem,net_investment_gain,prem_deferred,prem_incourse,total_net_prem,
+                  losses,loss_adjustment_expenses,net_underwriting_gain,`change_in-surplus_policyholders`,
+                  `1yr_loss_development`),
+                ~suppressWarnings(as.numeric(.x))),
+         return_on_surplus=net_income/policyholders_surplus,
+         return_on_assets=net_income/total_assets,
+         liab_to_liquidAssets=(total_liabilities-prem_deferred)/(net_cash_from_operations+ #cash
+                                                     earned_prem+ #cash
+                                                     unearned_prem+ #accounts receivable
+                                                     net_investment_gain), #cash
+         inCoursePrem_to_surplus=prem_incourse/policyholders_surplus,
+         writtenPrem_to_surplus=total_net_prem/policyholders_surplus,
+         lossReserves_to_surplus=(losses+loss_adjustment_expenses)/policyholders_surplus,
+         debt_to_equity=total_liabilities/policyholders_surplus,
+         loss_ratio=(losses+loss_adjustment_expenses)/earned_prem,
+         uw_margin=net_underwriting_gain/total_net_prem,
+         investment_income=net_investment_gain/earned_prem,
+         investment_yield=net_investment_gain/net_cash_from_operations,
+         return_on_investments=net_investment_gain/policyholders_surplus,
+         surplus_growth=`change_in-surplus_policyholders`/(policyholders_surplus-`change_in-surplus_policyholders`),
+         assets_to_surplus=total_assets/policyholders_surplus,
+         `1yrDev_to_surplus`=`1yr_loss_development`/policyholders_surplus) %>% 
+  select(Year,Company,return_on_surplus,return_on_assets,liab_to_liquidAssets,inCoursePrem_to_surplus,
+         writtenPrem_to_surplus,lossReserves_to_surplus,debt_to_equity,loss_ratio,uw_margin,investment_income,
+         investment_yield,return_on_investments,stock_price,surplus_growth,`1yrDev_to_surplus`,
+         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL)
+```
+
+
+```{r loss ratio ts by company,rows.print=20,fig.width=20}
+eda_df %>%
   na.omit() %>%
-  ggplot(aes(x=Year,y=loss_ratio)) +
-  geom_point() +
+  ggplot(aes(x=Year,y=return_on_assets)) +
+  geom_col() +
   theme_minimal() +
   facet_wrap(~as.factor(Company)) +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-  scale_x_continuous(breaks = seq(min(sample_df$Year),max(sample_df$Year), by = 1)) 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ```
 
 ```{r}
-colnames(sample_df)
+eda_df %
+```
+
+```{r multi-collinearity analysis}
+#create correlation threshold
+threshold <- 0.5
+#create correlation matrix
+ref_cor <- data.frame(cor(eda_df[,names(eda_df)[sapply(eda_df,is.numeric)]]%>%na.omit()))
+#analyze correlation matrix...filter by threshold value
+cor_data <- data.frame(names = names(ref_cor)) #create a new table for filtered values
+for (col in names(ref_cor)) { #evaluate each column in the correlation matrix
+  cor_vec <- ref_cor[, col] #collect individual column correlation scores
+  cor_data <- cor_data %>%
+    mutate(!!col := case_when( #conditional definition...based on threshold value
+                      abs(cor_vec) >= threshold ~ cor_vec, #when value meets threshold
+                      abs(cor_vec) < threshold ~ NA, #when value violates threshold
+                    ))}
+#display filtered correlation matrix
+cor_data  
 ```
 
