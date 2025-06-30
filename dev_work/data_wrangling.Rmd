@@ -70,7 +70,7 @@ parse_generalInfo <- function(ws_ns, ws_node, index){
                 values_from = V7,
                 values_fn = list) %>%
     #collect relevant rows
-    slice(2:110) %>%
+    dplyr::slice(2:110) %>%
     add_column(col_names=c('na1','gross_liab_prem','gross_prop_prem','gross_comined_prop_liab_prem','gross_other_lines_prem',
                            'gross_nonprop_reinsurance_prem','total_gross_prem','na2','net_liab_prem',
                            'net_prop_prem','net_comined_prop_liab_prem','net_other_lines_prem','net_nonprop_reinsurance_prem',
@@ -93,7 +93,7 @@ parse_generalInfo <- function(ws_ns, ws_node, index){
                            'na28','na29','2yr_dev_loss_to_policyholders_surplus'),
                .before=2,.name_repair = 'minimal') %>%
     #collect relevant columns
-    select(-c(V1,V2)) %>%
+    dplyr::select(-c(V1,V2)) %>%
     #transpose data frame
     t() %>%
     as.data.frame() %>%
@@ -131,14 +131,14 @@ parse_earnedPrem <- function(ws_ns, ws_node, index){
     mutate(across(everything(), as.character)) 
   title_str <- parsed_df[1,'V2']
   parsed_df <- parsed_df %>%
-    slice(-c(1:7)) %>%
-    select(V2,V3,V8,V9,V10,V11) %>%
+    dplyr::slice(-c(1:7)) %>%
+    dplyr::select(V2,V3,V8,V9,V10,V11) %>%
     rename(lob_index=V2,lob=V3,net_written_prem=V8,prior_unearned_prem=V9,unearned_prem=V10,earned_prem=V11) %>%
     mutate(suppressWarnings(round(as.numeric(lob_index), 1)),
            across(c(net_written_prem,prior_unearned_prem,unearned_prem,earned_prem),~ suppressWarnings(as.numeric(.x))),
            year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str))) %>%
     filter(lob=='TOTALS') %>%
-    select(year,earned_prem)
+    dplyr::select(year,earned_prem)
   parsed_df <- parsed_df %>%
     mutate(year=year-row_number()+1)
   return(parsed_df)
@@ -166,13 +166,13 @@ parse_paidExpenses <- function(ws_ns, ws_node, index){
     mutate(across(everything(), as.character)) 
   title_str <- parsed_df[1,'V1']
   parsed_df <- parsed_df %>%
-    slice(-c(1:6)) %>%
-    select(V2,V3,V7,V8,V9,V11) %>%
+    dplyr::slice(-c(1:6)) %>%
+    dplyr::select(V2,V3,V7,V8,V9,V11) %>%
     rename(label=V2,description=V3,lae=V7,underwriting_exp=V8,investment_exp=V9,total_exp=V11) %>%
     mutate(across(c(lae,underwriting_exp,investment_exp,total_exp),~ suppressWarnings(as.numeric(.x))),
            year=as.integer(sub('.*December 31, (.*?) OF.*','\\1',title_str))) %>%
     filter(label=='TOTAL EXPENSES PAID (Lines 25 - 26 + 27 - 28 + 29)') %>%
-    select(year,lae,underwriting_exp,investment_exp,total_exp)%>%
+    dplyr::select(year,lae,underwriting_exp,investment_exp,total_exp)%>%
     mutate(year=year-row_number()+1)
   return(parsed_df)
 }
@@ -202,7 +202,7 @@ parse_stockPrice <- function(tick_df){
     mutate(stock_price = map_dbl(adj_close, ~ if(length(.x) > 0){.x[[1]]}else{NA_real_}),
            Year = as.character(Year)) %>%
     #drop adj_close column
-    select(-adj_close)
+    dplyr::select(-adj_close)
   return(tickers_df)
 }
 ```
@@ -215,9 +215,9 @@ data_import<- function(input.df,input.indicators){
   #collect information from financial statements
   for(org in c(1:nrow(input.df))){
     #import .xml file
-    temp_general_doc <- read_xml(paste0("../../research/fin_statements/general/",input.df[org,'name'],".xml"))
-    temp_ep_doc <- read_xml(paste0("../../research/fin_statements/earned_prem/",input.df[org,'name'],".xml"))
-    temp_paidExp_doc <- read_xml(paste0("../../research/fin_statements/paid_expenses/",input.df[org,'name'],".xml"))
+    temp_general_doc <- read_xml(paste0("../../../research/fin_statements/general/",input.df[org,'name'],".xml"))
+    temp_ep_doc <- read_xml(paste0("../../../research/fin_statements/earned_prem/",input.df[org,'name'],".xml"))
+    temp_paidExp_doc <- read_xml(paste0("../../../research/fin_statements/paid_expenses/",input.df[org,'name'],".xml"))
     #initialize node information from file
     temp_general_ns <- xml_ns(temp_general_doc)
     temp_ep_ns <- xml_ns(temp_ep_doc)
@@ -248,7 +248,7 @@ data_import<- function(input.df,input.indicators){
   #return output data frame
   orgs_df <- orgs_df %>%
     mutate_all(~if_else(. == 'NA', NA, .)) %>%
-    select(-contains('na'))
+    dplyr::select(-contains('na'))
   return(orgs_df)
 }
 ```
@@ -299,9 +299,8 @@ base_df <- data_import(pcInput_df,pc_econIndicators)
 eda_df <- base_df %>%
   mutate(across(c(net_income,policyholders_surplus,total_assets,total_liabilities,net_cash_from_operations,
                   unearned_prem,earned_prem,net_investment_gain,prem_deferred,prem_incourse,total_net_prem,
-                  losses,lae,net_underwriting_gain,`change_in-surplus_policyholders`,
-                  `1yr_loss_development`),
-                ~suppressWarnings(as.numeric(.x))),
+                  losses,lae,net_underwriting_gain,`change_in-surplus_policyholders`,Year,
+                  `1yr_loss_development`),~suppressWarnings(as.numeric(.x))),
          return_on_surplus=net_income/policyholders_surplus,
          return_on_assets=net_income/total_assets,
          liab_to_liquidAssets=(total_liabilities-prem_deferred)/(net_cash_from_operations+ #cash
@@ -322,11 +321,11 @@ eda_df <- base_df %>%
          surplus_growth=`change_in-surplus_policyholders`/(policyholders_surplus-`change_in-surplus_policyholders`),
          assets_to_surplus=total_assets/policyholders_surplus,
          oneYRDev_to_surplus=`1yr_loss_development`/policyholders_surplus,
-         Company=as.factor(Company),Year=as.factor(Year),
+         Company=as.factor(Company),
          discrete_lossRatio=case_when(loss_ratio <= 1 ~ 1,
                                       loss_ratio > 1 & loss_ratio <= 2 ~ 2,
                                       .default = 3)) %>% 
-  select(Year,Company,return_on_surplus,return_on_assets,liab_to_liquidAssets,inCoursePrem_to_surplus,
+  dplyr::select(Year,Company,return_on_surplus,return_on_assets,liab_to_liquidAssets,inCoursePrem_to_surplus,
          writtenPrem_to_surplus,lossReserves_to_surplus,debt_to_equity,loss_ratio,uw_margin,investment_income,
          investment_yield,return_on_investments,stock_price,surplus_growth,oneYRDev_to_surplus,
          GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL,combined_ratio,operating_ratio,discrete_lossRatio) %>%
@@ -371,12 +370,12 @@ cor_data
 set.seed(100)
 #define correlated columns
 correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL',
-                     'PAYEMS','MRTSSM44000USS','return_on_assets','GDPC1','CPALTT01USM657N','Company')
+                     'PAYEMS','MRTSSM44000USS','return_on_assets','GDPC1','CPALTT01USM657N','Company','discrete_lossRatio')
 #define split criteria
 lm_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-lm_train <- eda_df[lm_trainIndices, names(eda_df) %notin% correlated_cols]
-lm_test  <- eda_df[-lm_trainIndices, names(eda_df) %notin% correlated_cols]
+lm_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
+lm_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols] 
 #separate samples into predictors (x) & target (y)
 lm_XTrain <- lm_train %>% dplyr::select(-c(loss_ratio)); lm_YTrain <- lm_train$loss_ratio
 lm_XTest <- lm_test %>% dplyr::select(-c(loss_ratio)); lm_YTest <- lm_test$loss_ratio
@@ -393,6 +392,7 @@ mlr.pred <- predict(mlr.model,newdata=lm_XTest)
 print(paste0('Test MLR RMSE: ',round(as.numeric(ModelMetrics::rmse(actual=lm_YTest,pred=mlr.pred)),3)))
 print(paste0('Test MLR R-Squared: ',round(as.numeric(rsq(data.frame(actual=lm_YTest,pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
 ```
+
 ```{r lm diagnostics}
 #homoscedasticity check
 variance.plot <- function(model){ #plot fitted values vs residuals 
@@ -419,10 +419,13 @@ plot(mlr.model,4)
   #440: Zurich's 2017 investment activities...catastrophe payouts
   #566 & 567: Berkshire Hathaway investment activities...relatively better
 #display vif metrics
-vif(mlr.model) %>%
-  as.data.frame() %>%
-  mutate(feature=rownames(vif(mlr.model)),
-         feature = fct_reorder(feature, GVIF, .desc = FALSE)) %>%
+vif_df <- vif(mlr.model) %>%
+  as.data.frame() %>% 
+  rename(GVIF='.') 
+
+vif_df %>%
+  mutate(feature=rownames(vif_df),
+         feature=fct_reorder(feature, GVIF, .desc = FALSE)) %>%
   ggplot() +
   geom_col(aes(y=feature,x=GVIF)) +
   labs(title='variance inflation factors',
@@ -433,14 +436,15 @@ vif(mlr.model) %>%
   theme(plot.title = element_text(hjust = 0.5),
         plot.subtitle = element_text(hjust = 0.5)) 
 ```
+
 ```{r lasso setup}
 #set seed
 set.seed(100)
 #define split criteria
 lasso_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-lasso_train <- eda_df[lasso_trainIndices, names(eda_df) %notin% correlated_cols]
-lasso_test  <- eda_df[-lasso_trainIndices, names(eda_df) %notin% correlated_cols]
+lasso_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
+lasso_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
 #separate samples into predictors (x) & target (y)
 lasso_XTrain <- lasso_train %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); lasso_YTrain <- lasso_train$loss_ratio
 lasso_XTest <- lasso_test %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); lasso_YTest <- lasso_test$loss_ratio
@@ -482,14 +486,15 @@ selected_features %>%
                                            estimate=pred)[1,'.estimate']),2)),
        x='lasso coefficient')
 ```
+
 ```{r rf setup}
 #set seed
 set.seed(100)
 #define split criteria
 rf_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-rf_train <- eda_df[rf_trainIndices, names(eda_df) %notin% correlated_cols]
-rf_test  <- eda_df[-rf_trainIndices, names(eda_df) %notin% correlated_cols]
+rf_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
+rf_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
 #separate samples into predictors (x) & target (y)
 rf_XTrain <- rf_train %>% dplyr::select(-c(loss_ratio)); rf_YTrain <- rf_train$loss_ratio
 rf_XTest <- rf_test %>% dplyr::select(-c(loss_ratio)); rf_YTest <- rf_test$loss_ratio
@@ -554,6 +559,7 @@ xgb.plot.importance(xgb.importance(model = xgb_model), top_n = 10,
                                   '\n \t r-squared: ',
                                   round(rsq, 2)))
 ```
+
 ```{r lda setup}
 #set split seed
 set.seed(100)
@@ -563,8 +569,8 @@ correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','
 #define split criteria
 lda_trainIndices <- createDataPartition(eda_df$discrete_lossRatio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-lda_train <- eda_df[lda_trainIndices, names(eda_df) %notin% correlated_cols]
-lda_test  <- eda_df[-lda_trainIndices, names(eda_df) %notin% correlated_cols]
+lda_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
+lda_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
 #separate samples into predictors (x) & target (y)
 lda_XTrain <- lda_train %>% dplyr::select(-c(discrete_lossRatio)); lda_YTrain <- lda_train$discrete_lossRatio %>% as.factor()
 lda_XTest <- lda_test %>% dplyr::select(-c(discrete_lossRatio)); lda_YTest <- lda_test$discrete_lossRatio %>% as.factor()
