@@ -10,7 +10,9 @@ options(scipen=999); `%notin%` <- Negate(`%in%`)
 lib_list <- c('dplyr','ipumsr','ggplot2','dtplyr',
               'stringr','tidyr','rvest','chatgpt',
               'xml2','purrr','tibble','yahoofinancer','YRmisc',
-              'caret','ModelMetrics','yardstick','car')
+              'caret','ModelMetrics','yardstick','car',
+              'glmnet','tidyverse','randomForest','xgboost',
+              'MASS','pROC')
 lapply(lib_list, library, character.only=TRUE)
 ```
 
@@ -320,26 +322,25 @@ eda_df <- base_df %>%
          surplus_growth=`change_in-surplus_policyholders`/(policyholders_surplus-`change_in-surplus_policyholders`),
          assets_to_surplus=total_assets/policyholders_surplus,
          oneYRDev_to_surplus=`1yr_loss_development`/policyholders_surplus,
-         Company=as.factor(Company),Year=as.factor(Year)) %>% 
+         Company=as.factor(Company),Year=as.factor(Year),
+         discrete_lossRatio=case_when(loss_ratio <= 1 ~ 1,
+                                      loss_ratio > 1 & loss_ratio <= 2 ~ 2,
+                                      .default = 3)) %>% 
   select(Year,Company,return_on_surplus,return_on_assets,liab_to_liquidAssets,inCoursePrem_to_surplus,
          writtenPrem_to_surplus,lossReserves_to_surplus,debt_to_equity,loss_ratio,uw_margin,investment_income,
          investment_yield,return_on_investments,stock_price,surplus_growth,oneYRDev_to_surplus,
-         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL,combined_ratio,operating_ratio) %>%
+         GDPC1,PAYEMS,CPALTT01USM657N,MRTSSM44000USS,M2REAL,combined_ratio,operating_ratio,discrete_lossRatio) %>%
   na.omit()
 ```
 
 ```{r loss ratio ts by company,rows.print=20,fig.width=20}
 eda_df %>%
   mutate(date=as.Date(paste0(Year,'/12/31'))) %>%
-  ggplot(aes(x=lossReserves_to_surplus,y=loss_ratio)) +
+  ggplot(aes(x=date,y=discrete_lossRatio)) +
   geom_line() + 
   theme_minimal() +
   facet_wrap(~as.factor(Company)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
-```
-
-```{r}
-eda_df %>% summary()
 ```
 
 ```{r multi-collinearity analysis}
@@ -377,8 +378,8 @@ lm_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE
 lm_train <- eda_df[lm_trainIndices, names(eda_df) %notin% correlated_cols]
 lm_test  <- eda_df[-lm_trainIndices, names(eda_df) %notin% correlated_cols]
 #separate samples into predictors (x) & target (y)
-lm_XTrain <- train %>% dplyr::select(-c(loss_ratio)); lm_YTrain <- train$loss_ratio
-lm_XTest <- test %>% dplyr::select(-c(loss_ratio)); lm_YTest <- test$loss_ratio
+lm_XTrain <- lm_train %>% dplyr::select(-c(loss_ratio)); lm_YTrain <- lm_train$loss_ratio
+lm_XTest <- lm_test %>% dplyr::select(-c(loss_ratio)); lm_YTest <- lm_test$loss_ratio
 ```
 
 ```{r lm model fit}
@@ -413,11 +414,15 @@ qqnorm(residuals(mlr.model),
        ylab='sample quantiles')
 qqline(residuals(mlr.model))
 #display cook's distance metrics
-plot(mlr.model,4,main=paste0("cook's distance with cutoff of ~",round(mean(cooks.distance(mlr.model))*3,3)))
+plot(mlr.model,4)
+#abnormal activity:
+  #440: Zurich's 2017 investment activities...catastrophe payouts
+  #566 & 567: Berkshire Hathaway investment activities...relatively better
 #display vif metrics
 vif(mlr.model) %>%
   as.data.frame() %>%
-  mutate(feature=rownames(vif(mlr.model))) %>%
+  mutate(feature=rownames(vif(mlr.model)),
+         feature = fct_reorder(feature, GVIF, .desc = FALSE)) %>%
   ggplot() +
   geom_col(aes(y=feature,x=GVIF)) +
   labs(title='variance inflation factors',
@@ -427,4 +432,222 @@ vif(mlr.model) %>%
   theme_minimal()+
   theme(plot.title = element_text(hjust = 0.5),
         plot.subtitle = element_text(hjust = 0.5)) 
+```
+```{r lasso setup}
+#set seed
+set.seed(100)
+#define split criteria
+lasso_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
+#perform split operation...train & test samples
+lasso_train <- eda_df[lasso_trainIndices, names(eda_df) %notin% correlated_cols]
+lasso_test  <- eda_df[-lasso_trainIndices, names(eda_df) %notin% correlated_cols]
+#separate samples into predictors (x) & target (y)
+lasso_XTrain <- lasso_train %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); lasso_YTrain <- lasso_train$loss_ratio
+lasso_XTest <- lasso_test %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); lasso_YTest <- lasso_test$loss_ratio
+```
+
+```{r lasso base model fit}
+#set seed
+set.seed(100)
+baseLasso.model <- suppressWarnings(cv.glmnet(lasso_XTrain,lasso_YTrain,alpha=1))
+#extract best lambda
+plot(baseLasso.model,main='')
+title(main = paste0('L1 error vs MSE with optimal log(lambda) ~ ',log(baseLasso.model$lambda.min)), line = 2.5)
+```
+
+```{r lasso final model fit}
+#set seed
+set.seed(100)
+finalLasso.model <- suppressWarnings(glmnet(lasso_XTrain,lasso_YTrain,alpha=1,lambda=baseLasso.model$lambda.min))
+lasso.pred <- suppressWarnings(predict(finalLasso.model,newx=lasso_XTest))
+```
+
+```{r lasso diagnostic, rows.print=25}
+#perform feature selection
+selected_features <- as.data.frame(coef(finalLasso.model)[which(coef(finalLasso.model) != 0), ]) %>% 
+  rename(coef=`coef(finalLasso.model)[which(coef(finalLasso.model) != 0), ]`) 
+selected_features <- selected_features %>%
+  mutate(feature=rownames(selected_features),
+         feature = fct_reorder(feature, coef, .desc = FALSE)) %>% 
+  filter(feature!='oneYRDev_to_surplus') #filter outlier importance...to view other relative importance relationships
+selected_features %>%
+  ggplot(aes(y=feature,x=coef))+
+    geom_col() +
+  theme_minimal() + 
+  labs(title = paste0('lasso feature selection for model with: \n \t rmse: ',
+                      round(as.numeric(ModelMetrics::rmse(actual=lasso_YTest,pred=lasso.pred)),2),
+                      '\n \t r-squared: ',
+                      round(as.numeric(rsq(data.frame(actual=lasso_YTest,pred=lasso.pred%>%as.data.frame()%>%rename(pred=s0)),
+                                           truth=actual,
+                                           estimate=pred)[1,'.estimate']),2)),
+       x='lasso coefficient')
+```
+```{r rf setup}
+#set seed
+set.seed(100)
+#define split criteria
+rf_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
+#perform split operation...train & test samples
+rf_train <- eda_df[rf_trainIndices, names(eda_df) %notin% correlated_cols]
+rf_test  <- eda_df[-rf_trainIndices, names(eda_df) %notin% correlated_cols]
+#separate samples into predictors (x) & target (y)
+rf_XTrain <- rf_train %>% dplyr::select(-c(loss_ratio)); rf_YTrain <- rf_train$loss_ratio
+rf_XTest <- rf_test %>% dplyr::select(-c(loss_ratio)); rf_YTest <- rf_test$loss_ratio
+```
+
+```{r rf model fit}
+set.seed(100)
+rf.model <- randomForest(rf_XTrain, rf_YTrain, importance = TRUE, ntree = 500)
+rf.pred <- predict(rf.model,newx=rf_XTest)
+```
+
+```{r rf diagnostic}
+#feature importance
+importance_df <- as.data.frame(importance(rf.model))
+importance_df$feature <- rownames(importance_df)
+#plot importance (IncMSE used here)
+importance_df %>%
+  arrange(desc(`%IncMSE`)) %>%
+  mutate(feature = fct_reorder(feature, `%IncMSE`)) %>%
+  ggplot(aes(x = `%IncMSE`, y = feature)) +
+    geom_col() +
+    labs(title = paste0("random forest feature importance with: \n \t rmse: ",
+                        round(sqrt(tail(rf.model$mse,1)),2),
+                        '\n \t r-squared: ',
+                        round(tail(rf.model$rsq,1),2)),
+         x = "% Increase in MSE", y = "")
+```
+
+```{r xgb setup}
+#set seed
+set.seed(100)
+#define split criteria
+xgb_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
+#perform split operation...train & test samples
+xgb_train <- eda_df[xgb_trainIndices, names(eda_df) %notin% correlated_cols] %>% mutate(Year=as.numeric(Year))
+xgb_test  <- eda_df[-xgb_trainIndices, names(eda_df) %notin% correlated_cols] %>% mutate(Year=as.numeric(Year))
+#separate samples into predictors (x) & target (y)
+xgb_XTrain <- xgb_train %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); xgb_YTrain <- xgb_train$loss_ratio
+xgb_XTest <- xgb_test %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); xgb_YTest <- xgb_test$loss_ratio
+```
+
+```{r xgb model fit}
+#fit xgboost regression model
+set.seed(100)
+xgb_model <- xgboost(data = xgb.DMatrix(data = xgb_XTrain, label = xgb_YTrain), 
+                     objective = "reg:squarederror", 
+                     nrounds = 100, 
+                     verbose = 0)
+```
+
+```{r xgb diagnostic}
+y_pred <- predict(xgb_model, newdata = xgb_XTest)
+#calculate r-squared
+rss <- sum((xgb_YTest - y_pred)^2)
+tss <- sum((xgb_YTest - mean(xgb_YTest))^2)
+rsq <- 1 - rss/tss
+#plot feature importance
+xgb.plot.importance(xgb.importance(model = xgb_model), top_n = 10, 
+                    rel_to_first = TRUE, 
+                    main = paste0("xgboost feature importance with: \n \t rmse: ",
+                                  round(ModelMetrics::rmse(xgb_YTest,y_pred),2),
+                                  '\n \t r-squared: ',
+                                  round(rsq, 2)))
+```
+```{r lda setup}
+#set split seed
+set.seed(100)
+#define correlated columns
+correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL','Year',
+                     'PAYEMS','MRTSSM44000USS','return_on_assets','GDPC1','CPALTT01USM657N','Company','loss_ratio','oneYRDev_to_surplus')
+#define split criteria
+lda_trainIndices <- createDataPartition(eda_df$discrete_lossRatio, p = 0.75, list = FALSE)
+#perform split operation...train & test samples
+lda_train <- eda_df[lda_trainIndices, names(eda_df) %notin% correlated_cols]
+lda_test  <- eda_df[-lda_trainIndices, names(eda_df) %notin% correlated_cols]
+#separate samples into predictors (x) & target (y)
+lda_XTrain <- lda_train %>% dplyr::select(-c(discrete_lossRatio)); lda_YTrain <- lda_train$discrete_lossRatio %>% as.factor()
+lda_XTest <- lda_test %>% dplyr::select(-c(discrete_lossRatio)); lda_YTest <- lda_test$discrete_lossRatio %>% as.factor()
+```
+
+```{r}
+lda.model <- lda(discrete_lossRatio ~ ., data = lda_train)
+
+# View model summary
+print(lda.model)
+
+# Predict on training data
+lda.pred <- predict(lda.model, lda_XTest)
+
+# Confusion matrix
+lda.table <- table(Predicted = lda.pred$class, Actual = lda_YTest)
+
+lda_errorRate <- mean(lda.pred$class != lda_YTest)
+cat("\nlda accuracy:", 1-round(lda_errorRate, 4), "\n")
+```
+
+```{r lda ld1 feature importance}
+lda_coeffs <- as.data.frame(lda.model$scaling)
+lda_coeffs$Feature <- rownames(lda_coeffs)
+
+lda_coeffs <- lda_coeffs %>%
+  mutate(Importance = abs(LD1))
+
+lda_coeffs %>%
+  arrange(desc(Importance)) %>%
+  mutate(Feature = fct_reorder(Feature, Importance)) %>%
+  ggplot(aes(x = Importance, y = Feature)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "LDA Feature Importance", x = "Importance", y = "")
+```
+
+```{r lda all lds feature importance}
+lda_coeffs <- as.data.frame(lda.model$scaling)
+lda_coeffs$Feature <- rownames(lda_coeffs)
+
+lda_coeffs <- lda_coeffs %>%
+  mutate(Importance = sqrt(rowSums(across(starts_with("LD"))^2)))
+
+lda_coeffs %>%
+  arrange(desc(Importance)) %>%
+  mutate(Feature = fct_reorder(Feature, Importance)) %>%
+  ggplot(aes(x = Importance, y = Feature)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "LDA Feature Importance", x = "Importance", y = "")
+```
+
+```{r lda diagnostic}
+# Plot LDs
+data.frame(lda.pred$x, risk_level = lda_YTest) %>%
+  ggplot(aes(x = LD1, y = LD2, color = risk_level)) +
+    geom_point() +
+    labs(title = "LDA: Linear Discriminants")
+# Actual class labels (factor)
+actual <- lda_test$discrete_lossRatio
+
+# Predicted posterior probabilities
+posterior <- as.data.frame(lda.pred$posterior)
+
+# Loop over each class
+auc_list <- list()
+roc_list <- list()
+
+for (cls in colnames(posterior)) {
+  # One-vs-rest: binary actual (1 if class = cls, 0 otherwise)
+  actual_binary <- as.numeric(actual == cls)
+  roc_obj <- suppressMessages(roc(actual_binary, posterior[[cls]]))
+
+  auc_list[[cls]] <- auc(roc_obj)
+  roc_list[[cls]] <- roc_obj
+}
+
+# Display AUCs
+print(auc_list)
+#
+# Plot all ROC curves
+plot(roc_list[[1]], col = 1, main = "One-vs-Rest ROC Curves (LDA)", lwd = 2)
+for (i in 2:length(roc_list)) {
+  plot(roc_list[[i]], add = TRUE, col = i, lwd = 2)
+}
+legend("bottomright", legend = names(roc_list), col = 1:length(roc_list), lwd = 2)
 ```
