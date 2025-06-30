@@ -570,7 +570,7 @@ lda_XTrain <- lda_train %>% dplyr::select(-c(discrete_lossRatio)); lda_YTrain <-
 lda_XTest <- lda_test %>% dplyr::select(-c(discrete_lossRatio)); lda_YTest <- lda_test$discrete_lossRatio %>% as.factor()
 ```
 
-```{r}
+```{r lda model fit}
 lda.model <- lda(discrete_lossRatio ~ ., data = lda_train)
 
 # View model summary
@@ -584,36 +584,6 @@ lda.table <- table(Predicted = lda.pred$class, Actual = lda_YTest)
 
 lda_errorRate <- mean(lda.pred$class != lda_YTest)
 cat("\nlda accuracy:", 1-round(lda_errorRate, 4), "\n")
-```
-
-```{r lda ld1 feature importance}
-lda_coeffs <- as.data.frame(lda.model$scaling)
-lda_coeffs$Feature <- rownames(lda_coeffs)
-
-lda_coeffs <- lda_coeffs %>%
-  mutate(Importance = abs(LD1))
-
-lda_coeffs %>%
-  arrange(desc(Importance)) %>%
-  mutate(Feature = fct_reorder(Feature, Importance)) %>%
-  ggplot(aes(x = Importance, y = Feature)) +
-  geom_col(fill = "steelblue") +
-  labs(title = "LDA Feature Importance", x = "Importance", y = "")
-```
-
-```{r lda all lds feature importance}
-lda_coeffs <- as.data.frame(lda.model$scaling)
-lda_coeffs$Feature <- rownames(lda_coeffs)
-
-lda_coeffs <- lda_coeffs %>%
-  mutate(Importance = sqrt(rowSums(across(starts_with("LD"))^2)))
-
-lda_coeffs %>%
-  arrange(desc(Importance)) %>%
-  mutate(Feature = fct_reorder(Feature, Importance)) %>%
-  ggplot(aes(x = Importance, y = Feature)) +
-  geom_col(fill = "steelblue") +
-  labs(title = "LDA Feature Importance", x = "Importance", y = "")
 ```
 
 ```{r lda diagnostic}
@@ -650,4 +620,34 @@ for (i in 2:length(roc_list)) {
   plot(roc_list[[i]], add = TRUE, col = i, lwd = 2)
 }
 legend("bottomright", legend = names(roc_list), col = 1:length(roc_list), lwd = 2)
+```
+
+```{r lda ld1 feature importance}
+lda_coeffs <- as.data.frame(lda.model$scaling)
+lda_coeffs$Feature <- rownames(lda_coeffs)
+
+lda_coeffs <- lda_coeffs %>%
+  mutate(Importance = abs(LD1))
+
+lda_coeffs %>%
+  arrange(desc(Importance)) %>%
+  mutate(Feature = fct_reorder(Feature, Importance)) %>%
+  ggplot(aes(x = Importance, y = Feature)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "LDA Feature Importance", x = "Importance", y = "")
+```
+
+```{r lda all lds feature importance}
+lda_coeffs <- as.data.frame(lda.model$scaling)
+lda_coeffs$Feature <- rownames(lda_coeffs)
+
+lda_coeffs <- lda_coeffs %>%
+  mutate(Importance = sqrt(rowSums(across(starts_with("LD"))^2)))
+
+lda_coeffs %>%
+  arrange(desc(Importance)) %>%
+  mutate(Feature = fct_reorder(Feature, Importance)) %>%
+  ggplot(aes(x = Importance, y = Feature)) +
+  geom_col(fill = "steelblue") +
+  labs(title = "LDA Feature Importance", x = "Importance", y = "")
 ```
