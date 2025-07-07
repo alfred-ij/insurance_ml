@@ -335,14 +335,14 @@ eda_df <- base_df %>%
 ```{r loss ratio ts by company,rows.print=20,fig.width=20}
 eda_df %>%
   mutate(date=as.Date(paste0(Year,'/12/31'))) %>%
-  ggplot(aes(x=date,y=discrete_lossRatio)) +
+  ggplot(aes(x=date,y=loss_ratio)) +
   geom_line() + 
   theme_minimal() +
   facet_wrap(~as.factor(Company)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ```
 
-```{r multi-collinearity analysis}
+```{r multi-collinearity analysis, rows.print=30}
 #create correlation threshold
 threshold <- 0.7
 #create correlation matrix
@@ -370,22 +370,22 @@ cor_data
 set.seed(100)
 #define correlated columns
 correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL',
-                     'PAYEMS','MRTSSM44000USS','return_on_assets','GDPC1','CPALTT01USM657N','Company','discrete_lossRatio')
+                     'PAYEMS','MRTSSM44000USS','return_on_assets','CPALTT01USM657N','Company','discrete_lossRatio')
 #define split criteria
 lm_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
 lm_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
 lm_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols] 
 #separate samples into predictors (x) & target (y)
-lm_XTrain <- lm_train %>% dplyr::select(-c(loss_ratio)); lm_YTrain <- lm_train$loss_ratio
-lm_XTest <- lm_test %>% dplyr::select(-c(loss_ratio)); lm_YTest <- lm_test$loss_ratio
+lm_XTrain <- lm_train %>% dplyr::select(-c(loss_ratio,Year)); lm_YTrain <- lm_train$loss_ratio
+lm_XTest <- lm_test %>% dplyr::select(-c(loss_ratio,Year)); lm_YTest <- lm_test$loss_ratio
 ```
 
 ```{r lm model fit}
 #set modeling seed
 set.seed(100)
 #fit model object...with all columns
-mlr.model <- lm(loss_ratio~.,data=lm_train)
+mlr.model <- lm(loss_ratio~.,data=lm_train%>%dplyr::select(-Year))
 #perform predictions with fitted model...using test sample
 mlr.pred <- predict(mlr.model,newdata=lm_XTest)
 #compute rmse & r-squared metrics...using test sample
@@ -446,8 +446,8 @@ lasso_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FA
 lasso_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
 lasso_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
 #separate samples into predictors (x) & target (y)
-lasso_XTrain <- lasso_train %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); lasso_YTrain <- lasso_train$loss_ratio
-lasso_XTest <- lasso_test %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); lasso_YTest <- lasso_test$loss_ratio
+lasso_XTrain <- lasso_train %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); lasso_YTrain <- lasso_train$loss_ratio
+lasso_XTest <- lasso_test %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); lasso_YTest <- lasso_test$loss_ratio
 ```
 
 ```{r lasso base model fit}
@@ -496,8 +496,8 @@ rf_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE
 rf_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
 rf_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
 #separate samples into predictors (x) & target (y)
-rf_XTrain <- rf_train %>% dplyr::select(-c(loss_ratio)); rf_YTrain <- rf_train$loss_ratio
-rf_XTest <- rf_test %>% dplyr::select(-c(loss_ratio)); rf_YTest <- rf_test$loss_ratio
+rf_XTrain <- rf_train %>% dplyr::select(-c(loss_ratio,Year)); rf_YTrain <- rf_train$loss_ratio
+rf_XTest <- rf_test %>% dplyr::select(-c(loss_ratio,Year)); rf_YTest <- rf_test$loss_ratio
 ```
 
 ```{r rf model fit}
@@ -532,8 +532,8 @@ xgb_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALS
 xgb_train <- eda_df[xgb_trainIndices, names(eda_df) %notin% correlated_cols] %>% mutate(Year=as.numeric(Year))
 xgb_test  <- eda_df[-xgb_trainIndices, names(eda_df) %notin% correlated_cols] %>% mutate(Year=as.numeric(Year))
 #separate samples into predictors (x) & target (y)
-xgb_XTrain <- xgb_train %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); xgb_YTrain <- xgb_train$loss_ratio
-xgb_XTest <- xgb_test %>% dplyr::select(-c(loss_ratio)) %>% as.matrix(); xgb_YTest <- xgb_test$loss_ratio
+xgb_XTrain <- xgb_train %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); xgb_YTrain <- xgb_train$loss_ratio
+xgb_XTest <- xgb_test %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); xgb_YTest <- xgb_test$loss_ratio
 ```
 
 ```{r xgb model fit}
@@ -565,7 +565,7 @@ xgb.plot.importance(xgb.importance(model = xgb_model), top_n = 10,
 set.seed(100)
 #define correlated columns
 correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL','Year',
-                     'PAYEMS','MRTSSM44000USS','return_on_assets','GDPC1','CPALTT01USM657N','Company','loss_ratio','oneYRDev_to_surplus')
+                     'PAYEMS','MRTSSM44000USS','return_on_assets','CPALTT01USM657N','Company','loss_ratio','oneYRDev_to_surplus')
 #define split criteria
 lda_trainIndices <- createDataPartition(eda_df$discrete_lossRatio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
