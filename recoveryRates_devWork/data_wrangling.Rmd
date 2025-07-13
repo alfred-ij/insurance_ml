@@ -1,0 +1,60 @@
+---
+title: "data wrangling"
+author: "stat group"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r libraries & env variables, include=FALSE, echo=FALSE}
+options(scipen=999); `%notin%` <- Negate(`%in%`)
+lib_list <- c('dplyr','tidyr','purrr','tibble')
+lapply(lib_list, library, character.only=TRUE)
+source('./.Renviron')
+Sys.setenv(OPENAI_API_KEY = OPENAI_API_KEY, OPENAI_VERBOSE = OPENAI_VERBOSE)
+```
+
+```{r chatgpt_helper}
+cat(ask_chatgpt("got the error: Error in `map()`:
+ℹ In index: 1.
+Caused by error in `dplyr::bind_rows()`:
+! Argument 1 must be a data frame or a named atomic vector.
+Backtrace:
+  1. purrr::map_df(names(df[char_cols]), remap_and_create_mapping)
+  2. purrr::map(.x, .f, ...)
+  3. purrr:::map_('list', .x, .f, ..., .progress = .progress)
+  7. global .f(.x[[i]], ...)
+ 11. purrr::map_df(df[[col]], ~factor(.x, levels = unique(.x)))
+ 12. dplyr::bind_rows(res, .id = .id)
+"))
+```
+
+```{r data import}
+#import data
+data <- read.csv('../../research/2017-gltd-recovery-mortality-tree-data/2017-gltd-tree-recovery-rate-input-data.csv')
+head(data)
+```
+
+```{r clean data}
+#remap character columns 
+remap_and_create_mapping <- function(col){ 
+  col_factor <- factor(data[[col]], levels = unique(data[[col]]))  
+  tibble(
+    original = levels(col_factor),
+    num_code = seq_along(levels(col_factor))
+  ) %>%
+    rename(!!col := original, !!paste0(col, "_num") := num_code)
+}
+#identify character columns
+char_cols <- names(data)[sapply(data, is.character)]
+#create mapping tables for each character column
+mapping_tables <- map(char_cols, remap_and_create_mapping)
+#create new data with mapped columns
+clean_data <- data %>%
+  mutate(across(all_of(char_cols), ~ as.factor(as.integer(factor(.x, levels = unique(.x))))))
+head(clean_data)
+```
+
+```{r}
+write.csv2(clean_data,'../../research/clean_recovery_rates.csv')
+```
+
