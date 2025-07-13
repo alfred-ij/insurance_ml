@@ -392,6 +392,9 @@ mlr.pred <- predict(mlr.model,newdata=lm_XTest)
 print(paste0('Test MLR RMSE: ',round(as.numeric(ModelMetrics::rmse(actual=lm_YTest,pred=mlr.pred)),3)))
 print(paste0('Test MLR R-Squared: ',round(as.numeric(rsq(data.frame(actual=lm_YTest,pred=mlr.pred),truth=actual,estimate=pred)[1,'.estimate']),2)*100,'%'))
 ```
+```{r}
+summary(mlr.model)
+```
 
 ```{r lm diagnostics}
 #homoscedasticity check
