@@ -364,18 +364,23 @@ cor_data
   #lossReserves_to_surplus->debt_to_equity
   #GDPC1->PAYEMS->MRTSSM44000USS->M2REAL
 ```
+```{r reg modeling params}
+#define regression modeling correlated columns
+reg_correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL',
+                         'PAYEMS','MRTSSM44000USS','return_on_assets','CPALTT01USM657N','Company','discrete_lossRatio')
+#define categorical modeling correlated columns
+cat_correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL','Year',
+                         'PAYEMS','MRTSSM44000USS','return_on_assets','CPALTT01USM657N','Company','loss_ratio','oneYRDev_to_surplus')
+#train-test split year
+split_year <- 2020
+```
 
 ```{r lm setup}
 #set split seed
 set.seed(100)
-#define correlated columns
-correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL',
-                     'PAYEMS','MRTSSM44000USS','return_on_assets','CPALTT01USM657N','Company','discrete_lossRatio')
-#define split criteria
-lm_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-lm_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
-lm_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols] 
+lm_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% reg_correlated_cols]
+lm_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% reg_correlated_cols] 
 #separate samples into predictors (x) & target (y)
 lm_XTrain <- lm_train %>% dplyr::select(-c(loss_ratio,Year)); lm_YTrain <- lm_train$loss_ratio
 lm_XTest <- lm_test %>% dplyr::select(-c(loss_ratio,Year)); lm_YTest <- lm_test$loss_ratio
@@ -443,11 +448,9 @@ vif_df %>%
 ```{r lasso setup}
 #set seed
 set.seed(100)
-#define split criteria
-lasso_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-lasso_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
-lasso_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
+lasso_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% reg_correlated_cols]
+lasso_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% reg_correlated_cols]
 #separate samples into predictors (x) & target (y)
 lasso_XTrain <- lasso_train %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); lasso_YTrain <- lasso_train$loss_ratio
 lasso_XTest <- lasso_test %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); lasso_YTest <- lasso_test$loss_ratio
@@ -490,26 +493,24 @@ selected_features %>%
        x='lasso coefficient')
 ```
 
-```{r rf setup}
+```{r rf reg setup}
 #set seed
 set.seed(100)
-#define split criteria
-rf_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-rf_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
-rf_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
+rf_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% reg_correlated_cols]
+rf_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% reg_correlated_cols]
 #separate samples into predictors (x) & target (y)
 rf_XTrain <- rf_train %>% dplyr::select(-c(loss_ratio,Year)); rf_YTrain <- rf_train$loss_ratio
 rf_XTest <- rf_test %>% dplyr::select(-c(loss_ratio,Year)); rf_YTest <- rf_test$loss_ratio
 ```
 
-```{r rf model fit}
+```{r rf reg model fit}
 set.seed(100)
 rf.model <- randomForest(rf_XTrain, rf_YTrain, importance = TRUE, ntree = 500)
 rf.pred <- predict(rf.model,newx=rf_XTest)
 ```
 
-```{r rf diagnostic}
+```{r rf reg diagnostic}
 #feature importance
 importance_df <- as.data.frame(importance(rf.model))
 importance_df$feature <- rownames(importance_df)
@@ -526,20 +527,18 @@ importance_df %>%
          x = "% Increase in MSE", y = "")
 ```
 
-```{r xgb setup}
+```{r xgb reg setup}
 #set seed
 set.seed(100)
-#define split criteria
-xgb_trainIndices <- createDataPartition(eda_df$loss_ratio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-xgb_train <- eda_df[xgb_trainIndices, names(eda_df) %notin% correlated_cols] %>% mutate(Year=as.numeric(Year))
-xgb_test  <- eda_df[-xgb_trainIndices, names(eda_df) %notin% correlated_cols] %>% mutate(Year=as.numeric(Year))
+xgb_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% reg_correlated_cols]
+xgb_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% reg_correlated_cols]
 #separate samples into predictors (x) & target (y)
 xgb_XTrain <- xgb_train %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); xgb_YTrain <- xgb_train$loss_ratio
 xgb_XTest <- xgb_test %>% dplyr::select(-c(loss_ratio,Year)) %>% as.matrix(); xgb_YTest <- xgb_test$loss_ratio
 ```
 
-```{r xgb model fit}
+```{r xgb reg model fit}
 #fit xgboost regression model
 set.seed(100)
 xgb_model <- xgboost(data = xgb.DMatrix(data = xgb_XTrain, label = xgb_YTrain), 
@@ -548,7 +547,7 @@ xgb_model <- xgboost(data = xgb.DMatrix(data = xgb_XTrain, label = xgb_YTrain),
                      verbose = 0)
 ```
 
-```{r xgb diagnostic}
+```{r xgb reg diagnostic}
 y_pred <- predict(xgb_model, newdata = xgb_XTest)
 #calculate r-squared
 rss <- sum((xgb_YTest - y_pred)^2)
@@ -566,14 +565,9 @@ xgb.plot.importance(xgb.importance(model = xgb_model), top_n = 10,
 ```{r lda setup}
 #set split seed
 set.seed(100)
-#define correlated columns
-correlated_cols <- c('operating_ratio','combined_ratio','liab_to_liquidAssets','debt_to_equity','M2REAL','Year',
-                     'PAYEMS','MRTSSM44000USS','return_on_assets','CPALTT01USM657N','Company','loss_ratio','oneYRDev_to_surplus')
-#define split criteria
-lda_trainIndices <- createDataPartition(eda_df$discrete_lossRatio, p = 0.75, list = FALSE)
 #perform split operation...train & test samples
-lda_train <- eda_df[eda_df$Year<2020, names(eda_df) %notin% correlated_cols]
-lda_test  <- eda_df[eda_df$Year>=2020, names(eda_df) %notin% correlated_cols]
+lda_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% cat_correlated_cols]
+lda_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% cat_correlated_cols]
 #separate samples into predictors (x) & target (y)
 lda_XTrain <- lda_train %>% dplyr::select(-c(discrete_lossRatio)); lda_YTrain <- lda_train$discrete_lossRatio %>% as.factor()
 lda_XTest <- lda_test %>% dplyr::select(-c(discrete_lossRatio)); lda_YTest <- lda_test$discrete_lossRatio %>% as.factor()
@@ -643,7 +637,7 @@ lda_coeffs %>%
   mutate(Feature = fct_reorder(Feature, Importance)) %>%
   ggplot(aes(x = Importance, y = Feature)) +
   geom_col(fill = "steelblue") +
-  labs(title = "LDA Feature Importance", x = "Importance", y = "")
+  labs(title = "LDA Feature Importance: using only ld1", x = "Importance", y = "")
 ```
 
 ```{r lda all lds feature importance}
@@ -659,4 +653,69 @@ lda_coeffs %>%
   ggplot(aes(x = Importance, y = Feature)) +
   geom_col(fill = "steelblue") +
   labs(title = "LDA Feature Importance", x = "Importance", y = "")
+```
+```{r rf cat setup}
+#set seed
+set.seed(100)
+#perform split operation...train & test samples
+rfCat_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% cat_correlated_cols]
+rfCat_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% cat_correlated_cols]
+#separate samples into predictors (x) & target (y)
+rfCat_XTrain <- rfCat_train %>% dplyr::select(-c(discrete_lossRatio)); rfCat_YTrain <- rfCat_train$discrete_lossRatio %>% as.factor()
+rfCat_XTest <- rfCat_test %>% dplyr::select(-c(discrete_lossRatio)); rfCat_YTest <- rfCat_test$discrete_lossRatio %>% as.factor()
+```
+
+```{r rf cat model fit}
+set.seed(100)
+rfCat.model <- randomForest(rfCat_XTrain, rfCat_YTrain, importance = TRUE, ntree = 500)
+rfCat.pred <- predict(rfCat.model,newx=rfCat_XTest)
+```
+
+```{r rf cat diagnostic}
+#feature importance
+importanceCat_df <- as.data.frame(importance(rfCat.model))
+importanceCat_df$feature <- rownames(importanceCat_df)
+#plot importance (MeanDecreaseAccuracy used here)
+importanceCat_df %>%
+  arrange(desc(MeanDecreaseAccuracy)) %>%
+  mutate(feature = fct_reorder(feature, MeanDecreaseAccuracy)) %>%
+  ggplot(aes(x = MeanDecreaseAccuracy, y = feature)) +
+    geom_col() +
+    labs(title = paste0("random forest feature importance with: \n \t classification error rate: ",
+                        round(mean(rfCat.model$confusion[,4]),2)),
+         x = "Mean Decrease in Prediction Accuracy", y = "")
+```
+
+```{r xgb cat setup}
+#set seed
+set.seed(100)
+#perform split operation...train & test samples
+xgbCat_train <- eda_df[eda_df$Year<split_year, names(eda_df) %notin% cat_correlated_cols] 
+xgbCat_test  <- eda_df[eda_df$Year>=split_year, names(eda_df) %notin% cat_correlated_cols]
+#separate samples into predictors (x) & target (y)
+xgbCat_XTrain <- xgbCat_train %>% dplyr::select(-c(discrete_lossRatio)) %>% as.matrix(); xgbCat_YTrain <- xgbCat_train$discrete_lossRatio - 1
+xgbCat_XTest <- xgbCat_test %>% dplyr::select(-c(discrete_lossRatio)) %>% as.matrix(); xgbCat_YTest <- xgbCat_test$discrete_lossRatio - 1
+```
+
+```{r xgb cat model fit}
+set.seed(100)
+#fit xgboost categorical model
+xgbCat_model <- xgboost(xgbCat_XTrain,xgbCat_YTrain, 
+                        objective = "multi:softprob",
+                        num_class=3,
+                        nrounds=100,
+                        verbose=0)
+```
+
+```{r xgb cat diagnostic}
+set.seed(100)
+#perform predictions
+xgbCat_pred <- predict(xgbCat_model, newdata = xgbCat_XTest) %>%
+  matrix(ncol=3,byrow=TRUE) %>%
+  max.col() - 1
+#plot feature importance
+xgb.plot.importance(xgb.importance(model = xgbCat_model), top_n = 10, 
+                    rel_to_first = TRUE, 
+                    main = paste0("xgboost feature importance with: \n \t classification error: ",
+                                  round(1-ModelMetrics::precision(xgbCat_pred,xgb_YTest),2)))
 ```
